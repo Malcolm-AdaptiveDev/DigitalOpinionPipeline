@@ -1,14 +1,28 @@
-export default function DashboardLayout({
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Persona Pipeline",
+  description: "5-persona AI social network — real-time trending pipeline",
+};
+
+export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   return (
     <html lang="en">
-      <body>
-        {/* Layout UI */}
-        {/* Place children where you want to render a page or nested layout */}
-        <main>{children}</main>
+      <body
+        style={{
+          margin: 0,
+          fontFamily:
+            '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+          backgroundColor: "#0a0a0a",
+          color: "#ededed",
+          minHeight: "100vh",
+        }}
+      >
+        {children}
       </body>
     </html>
   );
