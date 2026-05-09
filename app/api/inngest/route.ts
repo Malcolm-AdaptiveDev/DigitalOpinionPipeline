@@ -1,25 +1,26 @@
 /**
  * app/api/inngest/route.ts
- * Simplified Inngest handler — pipeline functions added back once
- * basic sync is confirmed working.
+ * Production Inngest handler — all three pipeline functions registered.
+ *
+ * GET  — introspection / health check from Inngest dashboard
+ * POST — function invocation (Inngest calls this to run your functions)
+ * PUT  — sync / registration (tells Inngest what functions exist)
  */
 
 import { serve } from "inngest/next";
 import { inngest } from "@/lib/inngest-client";
-
-// Minimal function to confirm the route compiles and Inngest can sync.
-// Pipeline functions (trendPipelineFunction etc.) are re-added after
-// confirming this endpoint is reachable.
-const pingFunction = inngest.createFunction(
-  { id: "ping", name: "Health ping" },
-  { event: "test/ping" },
-  async () => {
-    return { pong: true, at: new Date().toISOString() };
-  },
-);
+import {
+  trendPipelineFunction,
+  scheduledPostsFunction,
+  approvedPostWebhook,
+} from "@/lib/pipeline/pipeline";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
-  functions: [pingFunction],
+  functions: [
+    trendPipelineFunction,
+    scheduledPostsFunction,
+    approvedPostWebhook,
+  ],
   baseUrl: process.env.INNGEST_BASE_URL,
 });
