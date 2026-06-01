@@ -42,8 +42,8 @@ const templateCache = new Map<PersonaId, string>();
 function loadTemplate(personaId: PersonaId): string {
   if (templateCache.has(personaId)) return templateCache.get(personaId)!;
   const path = join(
-    __dirname,
-    "..",
+    process.cwd(),
+    "lib",
     "prompts",
     `${personaId}_system_prompt_template.md`,
   );
