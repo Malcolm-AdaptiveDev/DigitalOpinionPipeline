@@ -10,6 +10,7 @@ import type {
   EpisodicMemory,
   RelationalState,
   BeliefEvolution,
+  GenerationRequest,
   ReviewQueueItem,
   PublishedPost,
   RelationalEvent,
@@ -300,17 +301,25 @@ export async function getReviewItem(
 export async function updateReviewStatus(
   id: string,
   status: ReviewStatus,
-  opts?: { editorNotes?: string; finalContent?: string; reviewedBy?: string },
+  opts?: {
+    editorNotes?: string;
+    finalContent?: string;
+    reviewedBy?: string;
+    request?: GenerationRequest;
+  },
 ): Promise<void> {
+  const patch: Record<string, unknown> = {
+    status,
+    editor_notes: opts?.editorNotes,
+    final_content: opts?.finalContent,
+    reviewed_by: opts?.reviewedBy,
+    reviewed_at: new Date().toISOString(),
+  };
+  if (opts?.request) patch.request = opts.request;
+
   const { error } = await db()
     .from("review_queue")
-    .update({
-      status,
-      editor_notes: opts?.editorNotes,
-      final_content: opts?.finalContent,
-      reviewed_by: opts?.reviewedBy,
-      reviewed_at: new Date().toISOString(),
-    })
+    .update(patch)
     .eq("id", id);
   if (error) throw new Error(`updateReviewStatus: ${error.message}`);
 }

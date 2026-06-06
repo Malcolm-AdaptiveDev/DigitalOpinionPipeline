@@ -6,23 +6,23 @@ export function PipelineShell({
   active,
 }: {
   children:  ReactNode
-  active:    'dashboard' | 'review'
+  active:    'dashboard' | 'review' | 'budget'
 }) {
   return (
-    <div style={{ maxWidth: 1040, margin: '0 auto', padding: '2rem 1.5rem' }}>
+    <div style={{ maxWidth: 1120, margin: '0 auto', padding: '2rem 1.5rem' }}>
       <header style={{
         display:        'flex',
         alignItems:     'center',
         justifyContent: 'space-between',
-        borderBottom:   '0.5px solid #1e1e1e',
+        borderBottom:   '0.5px solid #2a2f3a',
         paddingBottom:  '1.25rem',
         marginBottom:   '1.75rem',
       }}>
         <div>
-          <h1 style={{ fontSize: 20, fontWeight: 500, margin: 0, color: '#ededed' }}>
+          <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0, color: '#f4f6fb' }}>
             Persona Pipeline
           </h1>
-          <p style={{ margin: '4px 0 0', fontSize: 13, color: '#444', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <p style={{ margin: '4px 0 0', fontSize: 13, color: '#9aa3b2', display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#1D9E75' }} />
             System operational
           </p>
@@ -32,6 +32,7 @@ export function PipelineShell({
           {([
             { href: '/',          label: 'Dashboard', key: 'dashboard' },
             { href: '/dashboard', label: 'Review queue', key: 'review' },
+            { href: '/dashboard?tab=budget', label: 'Calculator', key: 'budget' },
           ] as const).map(item => (
             <Link
               key={item.key}
@@ -41,9 +42,9 @@ export function PipelineShell({
                 borderRadius:   20,
                 fontSize:       13,
                 textDecoration: 'none',
-                background:     item.key === active ? '#1a1a1a' : 'transparent',
-                border:         `0.5px solid ${item.key === active ? '#333' : '#1a1a1a'}`,
-                color:          item.key === active ? '#ddd' : '#555',
+                background:     item.key === active ? '#1b2330' : '#11141a',
+                border:         `0.5px solid ${item.key === active ? '#3a4352' : '#2a2f3a'}`,
+                color:          item.key === active ? '#edf0f6' : '#a5adba',
               }}
             >
               {item.label}

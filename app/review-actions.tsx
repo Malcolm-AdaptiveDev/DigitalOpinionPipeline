@@ -6,18 +6,32 @@ import { useRouter }               from 'next/navigation'
 interface ReviewActionsProps {
   itemId:          string
   originalContent: string
+  originalTopicTags: string[]
+  mockMode?: boolean
 }
 
-export function ReviewActions({ itemId, originalContent }: ReviewActionsProps) {
+function parseTopicTags(value: string): string[] {
+  return Array.from(
+    new Set(
+      value
+        .split(',')
+        .map(tag => tag.trim().toLowerCase().replace(/\s+/g, '_'))
+        .filter(Boolean),
+    ),
+  )
+}
+
+export function ReviewActions({ itemId, originalContent, originalTopicTags, mockMode = false }: ReviewActionsProps) {
   const router                          = useRouter()
   const [isPending, startTransition]    = useTransition()
   const [mode, setMode]                 = useState<'idle' | 'editing'>('idle')
   const [editedContent, setEditedContent] = useState(originalContent)
+  const [topicTagsText, setTopicTagsText] = useState(originalTopicTags.join(', '))
   const [editorNotes, setEditorNotes]   = useState('')
   const [error, setError]               = useState<string | null>(null)
   const [done, setDone]                 = useState(false)
 
-  async function callWebhook(payload: Record<string, string>) {
+  async function callWebhook(payload: Record<string, unknown>) {
     setError(null)
     const res = await fetch('/api/webhooks/post-approved', {
       method:  'POST',
@@ -33,7 +47,7 @@ export function ReviewActions({ itemId, originalContent }: ReviewActionsProps) {
 
   async function handleReject() {
     try {
-      await callWebhook({ reviewItemId: itemId, status: 'rejected', reviewedBy: 'operator' })
+      await callWebhook({ reviewItemId: itemId, status: 'rejected', reviewedBy: 'operator', mockMode })
       setDone(true)
       startTransition(() => router.refresh())
     } catch (e) {
@@ -43,7 +57,7 @@ export function ReviewActions({ itemId, originalContent }: ReviewActionsProps) {
 
   async function handleApprove() {
     try {
-      await callWebhook({ reviewItemId: itemId, reviewedBy: 'operator' })
+      await callWebhook({ reviewItemId: itemId, reviewedBy: 'operator', mockMode })
       setDone(true)
       startTransition(() => router.refresh())
     } catch (e) {
@@ -57,8 +71,10 @@ export function ReviewActions({ itemId, originalContent }: ReviewActionsProps) {
       await callWebhook({
         reviewItemId: itemId,
         finalContent: editedContent,
+        topicTags:    parseTopicTags(topicTagsText),
         editorNotes,
         reviewedBy:   'operator',
+        mockMode,
       })
       setDone(true)
       startTransition(() => router.refresh())
@@ -143,6 +159,22 @@ export function ReviewActions({ itemId, originalContent }: ReviewActionsProps) {
           />
           <input
             type="text"
+            value={topicTagsText}
+            onChange={e => setTopicTagsText(e.target.value)}
+            placeholder="Topic tags, comma separated"
+            style={{
+              width:        '100%',
+              fontSize:     13,
+              background:   '#10131a',
+              color:        '#d6d9e0',
+              border:       '0.5px solid #3a4250',
+              borderRadius: 8,
+              padding:      '8px 12px',
+              marginBottom: 8,
+            }}
+          />
+          <input
+            type="text"
             value={editorNotes}
             onChange={e => setEditorNotes(e.target.value)}
             placeholder="Editor notes (optional)"
@@ -150,8 +182,8 @@ export function ReviewActions({ itemId, originalContent }: ReviewActionsProps) {
               width:        '100%',
               fontSize:     13,
               background:   '#0a0a0a',
-              color:        '#aaa',
-              border:       '0.5px solid #2a2a2a',
+              color:        '#c4c8d0',
+              border:       '0.5px solid #3a4250',
               borderRadius: 8,
               padding:      '7px 12px',
               marginBottom: 10,
@@ -167,7 +199,7 @@ export function ReviewActions({ itemId, originalContent }: ReviewActionsProps) {
               Save &amp; approve
             </button>
             <button
-              onClick={() => { setMode('idle'); setEditedContent(originalContent) }}
+              onClick={() => { setMode('idle'); setEditedContent(originalContent); setTopicTagsText(originalTopicTags.join(', ')) }}
               disabled={isPending}
               style={{ ...btnBase, borderColor: '#333', color: '#555' }}
             >

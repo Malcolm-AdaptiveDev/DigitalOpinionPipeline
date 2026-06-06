@@ -158,6 +158,7 @@ function detectBeliefShift(
 export interface MemoryWriteOptions {
   reviewItem: ReviewQueueItem;
   request: GenerationRequest;
+  topicTags?: string[];
   platformPostId?: string;
   engagementScore?: number;
 
@@ -172,6 +173,25 @@ export interface MemoryWriteOptions {
   };
 }
 
+function normalizeTopicTags(tags: string[]): string[] {
+  return Array.from(
+    new Set(
+      tags
+        .map((tag) => tag.trim().toLowerCase().replace(/\s+/g, "_"))
+        .filter((tag) => tag.length > 0),
+    ),
+  ).slice(0, 10);
+}
+
+function deriveTopicTags(request: GenerationRequest): string[] {
+  return normalizeTopicTags([
+    ...(request.topicTags ?? []),
+    ...request.topic
+      .split(/\s+/)
+      .filter((word) => word.length > 3),
+  ]);
+}
+
 export async function writePublishedPostToMemory(
   opts: MemoryWriteOptions,
 ): Promise<void> {
@@ -180,6 +200,7 @@ export async function writePublishedPostToMemory(
     reviewItem.final_content ?? reviewItem.generation.content;
   const persona = reviewItem.generation.persona as PersonaId;
   const platform = reviewItem.generation.platform as Platform;
+  const topicTags = normalizeTopicTags(opts.topicTags ?? deriveTopicTags(request));
 
   console.log(`[MemoryWrite] Writing ${persona} / ${platform} post to memory…`);
 
@@ -192,11 +213,7 @@ export async function writePublishedPostToMemory(
     memory_type: "post",
     content: finalContent,
     embedding,
-    topic_tags: request.topic
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((w) => w.length > 3)
-      .slice(0, 5),
+    topic_tags: topicTags,
     platform,
     cross_refs: request.crossTagPersona ? [] : [], // Populated in cascade step
     engagement_score: opts.engagementScore ?? 0,
@@ -244,7 +261,7 @@ export async function writePublishedPostToMemory(
       platform,
       content: finalContent,
       published_at: new Date().toISOString(),
-      topic_tags: [],
+      topic_tags: topicTags,
       cross_refs: [],
     },
     request,
@@ -268,7 +285,7 @@ export async function writePublishedPostToMemory(
     content: finalContent,
     platform_post_id: opts.platformPostId,
     published_at: new Date().toISOString(),
-    topic_tags: [],
+    topic_tags: topicTags,
     cross_refs: [],
     belief_shift: shiftData
       ? {

@@ -40,6 +40,7 @@ import {
   startPipelineRun,
   completePipelineRun,
 } from "@/lib/pipeline/db";
+import { getPipelineConfig } from "@/lib/pipeline/config";
 import type {
   PersonaId,
   ScoredTrendItem,
@@ -95,6 +96,7 @@ async function processTrendForPersona(
   const request: GenerationRequest = {
     persona: personaId,
     topic: item.topic,
+    topicTags: item.tags,
     worldContext,
     networkActivity,
     platform,
@@ -171,9 +173,11 @@ export async function runTrendPipeline(): Promise<void> {
   let trendsF = 0,
     trendsS = 0,
     generated = 0,
-    queued = 0;
+    queued = 0,
+    cascadesGenerated = 0;
 
   await startPipelineRun(runId);
+  const config = await getPipelineConfig();
   console.log(
     `\n[Pipeline] Run ${runId} started at ${new Date().toISOString()}`,
   );
@@ -202,7 +206,7 @@ export async function runTrendPipeline(): Promise<void> {
     // Stage 2 — Scoring + routing
     let scoredItems: Awaited<ReturnType<typeof scoreAndRoute>>;
     try {
-      scoredItems = await scoreAndRoute(rawItems);
+      scoredItems = await scoreAndRoute(rawItems, config.relevance_threshold);
       trendsS = scoredItems.length;
     } catch (err) {
       runErrors.push({
@@ -220,11 +224,11 @@ export async function runTrendPipeline(): Promise<void> {
     }
 
     // Retrieve any previously scored but unprocessed items too
-    const unprocessed = await getUnprocessedTrends(10);
+    const unprocessed = await getUnprocessedTrends(config.max_trends_per_run);
     const allItems = [
       ...scoredItems,
       ...unprocessed.filter((u) => !scoredItems.some((s) => s.id === u.id)),
-    ];
+    ].slice(0, config.max_trends_per_run);
 
     if (allItems.length === 0) {
       console.log("[Pipeline] No relevant trend items found this run.");
@@ -260,7 +264,8 @@ export async function runTrendPipeline(): Promise<void> {
       // Process each assigned persona sequentially to avoid thundering herd
       const primaryResults: GenerationResult[] = [];
 
-      for (const personaId of item.assigned_personas) {
+      const assignedPersonas = item.assigned_personas.slice(0, config.max_personas_per_trend);
+      for (const personaId of assignedPersonas) {
         const result = await processTrendForPersona(
           item,
           personaId,
@@ -278,11 +283,12 @@ export async function runTrendPipeline(): Promise<void> {
       }
 
       // Cross-persona cascade — detect reactions from primary results
-      if (primaryResults.length > 0) {
+      if (config.cascade_enabled && primaryResults.length > 0 && cascadesGenerated < config.max_cascades_per_run) {
         const latestResult = primaryResults[primaryResults.length - 1];
         const latestRequest = {
           persona: latestResult.persona,
           topic: item.topic,
+          topicTags: item.tags,
           worldContext: buildWorldContext(item, latestResult.persona),
           networkActivity,
           platform: latestResult.platform,
@@ -300,7 +306,7 @@ export async function runTrendPipeline(): Promise<void> {
           networkActivity,
         );
 
-        for (const cascade of cascades) {
+        for (const cascade of cascades.slice(0, config.max_cascades_per_run - cascadesGenerated)) {
           // Don't generate cascade if persona was already assigned
           if (item.assigned_personas.includes(cascade.persona)) continue;
 
@@ -327,16 +333,18 @@ export async function runTrendPipeline(): Promise<void> {
               disclosureRequired: cascade.disclosureRequired,
             });
 
-            const cascadeResult = await generatePost(cascade, cascadeAssembled);
+            const cascadeRequest = { ...cascade, topicTags: item.tags };
+            const cascadeResult = await generatePost(cascadeRequest, cascadeAssembled);
             await insertReviewItem({
               generation: cascadeResult,
-              request: cascade,
+              request: cascadeRequest,
               status: "pending",
               queued_at: new Date().toISOString(),
             });
 
             generated++;
             queued++;
+            cascadesGenerated++;
             console.log(
               `[Pipeline] Cascade queued: ${cascade.persona}/${cascade.platform}`,
             );
@@ -390,6 +398,7 @@ export async function processApprovedPost(
     editorNotes?: string;
     reviewedBy?: string;
     platformPostId?: string;
+    topicTags?: string[];
     beliefShift?: MemoryWriteOptions["beliefShift"];
   },
 ): Promise<void> {
@@ -402,6 +411,10 @@ export async function processApprovedPost(
     return;
   }
 
+  const request = opts?.topicTags
+    ? { ...item.request, topicTags: opts.topicTags }
+    : item.request;
+
   // Update review record
   await updateReviewStatus(
     reviewItemId,
@@ -410,6 +423,7 @@ export async function processApprovedPost(
       editorNotes: opts?.editorNotes,
       finalContent: opts?.finalContent,
       reviewedBy: opts?.reviewedBy,
+      request,
     },
   );
 
@@ -418,8 +432,10 @@ export async function processApprovedPost(
     reviewItem: {
       ...item,
       final_content: opts?.finalContent ?? item.final_content,
+      request,
     },
-    request: item.request,
+    request,
+    topicTags: opts?.topicTags,
     platformPostId: opts?.platformPostId,
     beliefShift: opts?.beliefShift,
   });
@@ -606,6 +622,7 @@ export const approvedPostWebhook = inngest.createFunction(
       editorNotes,
       reviewedBy,
       platformPostId,
+      topicTags,
       beliefShift,
     } = event.data as {
       reviewItemId: string;
@@ -613,6 +630,7 @@ export const approvedPostWebhook = inngest.createFunction(
       editorNotes?: string;
       reviewedBy?: string;
       platformPostId?: string;
+      topicTags?: string[];
       beliefShift?: MemoryWriteOptions["beliefShift"];
     };
 
@@ -622,6 +640,7 @@ export const approvedPostWebhook = inngest.createFunction(
         editorNotes,
         reviewedBy,
         platformPostId,
+        topicTags,
         beliefShift,
       }),
     );

@@ -188,6 +188,7 @@ export type ToneModifier =
 export interface GenerationRequest {
   persona: PersonaId;
   topic: string;
+  topicTags?: string[];
   worldContext: WorldContext;
   networkActivity: NetworkActivity[];
   platform: Platform;
