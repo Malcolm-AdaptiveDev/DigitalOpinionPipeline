@@ -4,7 +4,7 @@
  * Every pipeline stage imports from here — never creates its own client.
  */
 
-import { createClient, SupabaseClient } from '@supabase/supabase-js'
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import type {
   PersonaId,
   EpisodicMemory,
@@ -17,24 +17,24 @@ import type {
   ScoredTrendItem,
   PipelineRun,
   ReviewStatus,
-} from '@/lib/pipeline/types'
+} from "@/lib/pipeline/types";
 
 // ─── Singleton ────────────────────────────────────────────────────────────────
 
-let _client: SupabaseClient | null = null
+let _client: SupabaseClient | null = null;
 
 export function db(): SupabaseClient {
   if (!_client) {
-    const url = process.env.SUPABASE_URL
-    const key = process.env.SUPABASE_SERVICE_KEY
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_KEY;
     if (!url || !key) {
-      throw new Error('SUPABASE_URL and SUPABASE_SERVICE_KEY must be set')
+      throw new Error("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set");
     }
     _client = createClient(url, key, {
       auth: { persistSession: false },
-    })
+    });
   }
-  return _client
+  return _client;
 }
 
 // ─── Episodic Memory ──────────────────────────────────────────────────────────
@@ -68,227 +68,241 @@ export async function searchEpisodicMemory(
   personaId: PersonaId,
   queryEmbedding: number[],
   topK = 5,
-  threshold = 0.65
+  threshold = 0.65,
 ): Promise<EpisodicMemory[]> {
-  const { data, error } = await db().rpc('match_episodic_memories', {
+  const { data, error } = await db().rpc("match_episodic_memories", {
     query_embedding: queryEmbedding,
     match_persona_id: personaId,
     match_count: topK,
     similarity_threshold: threshold,
-  })
-  if (error) throw new Error(`searchEpisodicMemory: ${error.message}`)
-  return data ?? []
+  });
+  if (error) throw new Error(`searchEpisodicMemory: ${error.message}`);
+  return data ?? [];
 }
 
 export async function getRecentPostsOnTopic(
   personaId: PersonaId,
   topicTag: string,
-  limit = 20
-): Promise<Pick<EpisodicMemory, 'content' | 'engagement_score' | 'created_at' | 'platform'>[]> {
+  limit = 20,
+): Promise<
+  Pick<
+    EpisodicMemory,
+    "content" | "engagement_score" | "created_at" | "platform"
+  >[]
+> {
   const { data, error } = await db()
-    .from('episodic_memory')
-    .select('content, engagement_score, created_at, platform')
-    .eq('persona_id', personaId)
-    .contains('topic_tags', [topicTag])
-    .order('created_at', { ascending: false })
-    .limit(limit)
-  if (error) throw new Error(`getRecentPostsOnTopic: ${error.message}`)
-  return data ?? []
+    .from("episodic_memory")
+    .select("content, engagement_score, created_at, platform")
+    .eq("persona_id", personaId)
+    .contains("topic_tags", [topicTag])
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`getRecentPostsOnTopic: ${error.message}`);
+  return data ?? [];
 }
 
 export async function getRecentNetworkPosts(
   excludePersona: PersonaId,
-  withinHours = 48
+  withinHours = 48,
 ): Promise<EpisodicMemory[]> {
-  const since = new Date(Date.now() - withinHours * 3600 * 1000).toISOString()
+  const since = new Date(Date.now() - withinHours * 3600 * 1000).toISOString();
   const { data, error } = await db()
-    .from('episodic_memory')
-    .select('*')
-    .neq('persona_id', excludePersona)
-    .gte('created_at', since)
-    .order('created_at', { ascending: false })
-    .limit(20)
-  if (error) throw new Error(`getRecentNetworkPosts: ${error.message}`)
-  return data ?? []
+    .from("episodic_memory")
+    .select("*")
+    .neq("persona_id", excludePersona)
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(20);
+  if (error) throw new Error(`getRecentNetworkPosts: ${error.message}`);
+  return data ?? [];
 }
 
 export async function writeEpisodicMemory(
-  record: Omit<EpisodicMemory, 'id'>
+  record: Omit<EpisodicMemory, "id">,
 ): Promise<string> {
   const { data, error } = await db()
-    .from('episodic_memory')
+    .from("episodic_memory")
     .insert(record)
-    .select('id')
-    .single()
-  if (error) throw new Error(`writeEpisodicMemory: ${error.message}`)
-  return data.id
+    .select("id")
+    .single();
+  if (error) throw new Error(`writeEpisodicMemory: ${error.message}`);
+  return data.id;
 }
 
 // ─── Relational State ─────────────────────────────────────────────────────────
 
 export async function getRelationalStates(
-  personaFrom: PersonaId
+  personaFrom: PersonaId,
 ): Promise<RelationalState[]> {
   const { data, error } = await db()
-    .from('relational_state')
-    .select('*')
-    .eq('persona_from', personaFrom)
-  if (error) throw new Error(`getRelationalStates: ${error.message}`)
-  return data ?? []
+    .from("relational_state")
+    .select("*")
+    .eq("persona_from", personaFrom);
+  if (error) throw new Error(`getRelationalStates: ${error.message}`);
+  return data ?? [];
 }
 
 export async function upsertRelationalState(
-  state: RelationalState
+  state: RelationalState,
 ): Promise<void> {
   const { error } = await db()
-    .from('relational_state')
-    .upsert(state, { onConflict: 'persona_from,persona_to' })
-  if (error) throw new Error(`upsertRelationalState: ${error.message}`)
+    .from("relational_state")
+    .upsert(state, { onConflict: "persona_from,persona_to" });
+  if (error) throw new Error(`upsertRelationalState: ${error.message}`);
 }
 
 export async function applyRelationalEvent(
-  event: RelationalEvent
+  event: RelationalEvent,
 ): Promise<void> {
   const existing = await db()
-    .from('relational_state')
-    .select('*')
-    .eq('persona_from', event.from_persona)
-    .eq('persona_to', event.to_persona)
-    .maybeSingle()
+    .from("relational_state")
+    .select("*")
+    .eq("persona_from", event.from_persona)
+    .eq("persona_to", event.to_persona)
+    .maybeSingle();
 
   const current: RelationalState = existing.data ?? {
     persona_from: event.from_persona,
     persona_to: event.to_persona,
     trust_score: 0.5,
     tension_score: 0.5,
-    recent_sentiment: 'neutral',
+    recent_sentiment: "neutral",
     shared_positions: [],
     active_disputes: [],
     interaction_count: 0,
     last_interaction: new Date().toISOString(),
-  }
+  };
 
-  const clamp = (v: number) => Math.min(1, Math.max(0, v))
-  let disputes = [...(current.active_disputes ?? [])]
-  let shared   = [...(current.shared_positions ?? [])]
+  const clamp = (v: number) => Math.min(1, Math.max(0, v));
+  let disputes = [...(current.active_disputes ?? [])];
+  let shared = [...(current.shared_positions ?? [])];
 
   if (event.new_dispute && !disputes.includes(event.new_dispute)) {
-    disputes.push(event.new_dispute)
+    disputes.push(event.new_dispute);
   }
   if (event.resolved_dispute) {
-    disputes = disputes.filter(d => d !== event.resolved_dispute)
+    disputes = disputes.filter((d) => d !== event.resolved_dispute);
   }
-  if (event.new_shared_position && !shared.includes(event.new_shared_position)) {
-    shared.push(event.new_shared_position)
+  if (
+    event.new_shared_position &&
+    !shared.includes(event.new_shared_position)
+  ) {
+    shared.push(event.new_shared_position);
   }
 
   const updated: RelationalState = {
     ...current,
-    trust_score:       clamp(current.trust_score + event.trust_delta),
-    tension_score:     clamp(current.tension_score + event.tension_delta),
-    recent_sentiment:  event.new_sentiment ?? current.recent_sentiment,
-    active_disputes:   disputes,
-    shared_positions:  shared,
+    trust_score: clamp(current.trust_score + event.trust_delta),
+    tension_score: clamp(current.tension_score + event.tension_delta),
+    recent_sentiment: event.new_sentiment ?? current.recent_sentiment,
+    active_disputes: disputes,
+    shared_positions: shared,
     interaction_count: (current.interaction_count ?? 0) + 1,
-    last_interaction:  new Date().toISOString(),
-    recent_summary:    event.summary,
-  }
+    last_interaction: new Date().toISOString(),
+    recent_summary: event.summary,
+  };
 
-  await upsertRelationalState(updated)
+  await upsertRelationalState(updated);
 }
 
 // ─── Belief Evolution ─────────────────────────────────────────────────────────
 
 export async function getBeliefEvolution(
   personaId: PersonaId,
-  topicKey: string
+  topicKey: string,
 ): Promise<BeliefEvolution[]> {
   const { data, error } = await db()
-    .from('belief_evolution')
-    .select('*')
-    .eq('persona_id', personaId)
+    .from("belief_evolution")
+    .select("*")
+    .eq("persona_id", personaId)
     .or(`topic.eq.${topicKey},topic.ilike.%${topicKey}%`)
-    .order('created_at', { ascending: false })
-    .limit(5)
-  if (error) throw new Error(`getBeliefEvolution: ${error.message}`)
-  return data ?? []
+    .order("created_at", { ascending: false })
+    .limit(5);
+  if (error) throw new Error(`getBeliefEvolution: ${error.message}`);
+  return data ?? [];
 }
 
 export async function writeBeliefEvolution(
-  record: Omit<BeliefEvolution, 'id'>
+  record: Omit<BeliefEvolution, "id">,
 ): Promise<string> {
   const { data, error } = await db()
-    .from('belief_evolution')
+    .from("belief_evolution")
     .insert(record)
-    .select('id')
-    .single()
-  if (error) throw new Error(`writeBeliefEvolution: ${error.message}`)
-  return data.id
+    .select("id")
+    .single();
+  if (error) throw new Error(`writeBeliefEvolution: ${error.message}`);
+  return data.id;
 }
 
 // ─── Trend Queue ──────────────────────────────────────────────────────────────
 
 export async function insertRawTrends(items: RawTrendItem[]): Promise<void> {
-  if (items.length === 0) return
-  const { error } = await db().from('trending_queue').insert(items)
-  if (error) throw new Error(`insertRawTrends: ${error.message}`)
+  if (items.length === 0) return;
+  const { error } = await db().from("trending_queue").insert(items);
+  if (error) throw new Error(`insertRawTrends: ${error.message}`);
 }
 
-export async function insertScoredTrend(item: ScoredTrendItem): Promise<void> {
-  const { error } = await db().from('scored_trends').insert(item)
-  if (error) throw new Error(`insertScoredTrend: ${error.message}`)
+export async function insertScoredTrend(
+  item: ScoredTrendItem & { urgency_rank?: number; processed?: boolean },
+): Promise<void> {
+  const { error } = await db().from("scored_trends").insert(item);
+  if (error) throw new Error(`insertScoredTrend: ${error.message}`);
 }
 
-export async function getUnprocessedTrends(limit = 20): Promise<ScoredTrendItem[]> {
+export async function getUnprocessedTrends(
+  limit = 20,
+): Promise<ScoredTrendItem[]> {
   const { data, error } = await db()
-    .from('scored_trends')
-    .select('*')
-    .eq('processed', false)
-    .order('urgency_rank', { ascending: true })
-    .limit(limit)
-  if (error) throw new Error(`getUnprocessedTrends: ${error.message}`)
-  return data ?? []
+    .from("scored_trends")
+    .select("*")
+    .eq("processed", false)
+    .order("urgency_rank", { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(`getUnprocessedTrends: ${error.message}`);
+  return data ?? [];
 }
 
 export async function markTrendProcessed(trendId: string): Promise<void> {
   const { error } = await db()
-    .from('scored_trends')
+    .from("scored_trends")
     .update({ processed: true, processed_at: new Date().toISOString() })
-    .eq('id', trendId)
-  if (error) throw new Error(`markTrendProcessed: ${error.message}`)
+    .eq("id", trendId);
+  if (error) throw new Error(`markTrendProcessed: ${error.message}`);
 }
 
 // ─── Review Queue ─────────────────────────────────────────────────────────────
 
 export async function insertReviewItem(
-  item: Omit<ReviewQueueItem, 'id'>
+  item: Omit<ReviewQueueItem, "id">,
 ): Promise<string> {
   const { data, error } = await db()
-    .from('review_queue')
+    .from("review_queue")
     .insert(item)
-    .select('id')
-    .single()
-  if (error) throw new Error(`insertReviewItem: ${error.message}`)
-  return data.id
+    .select("id")
+    .single();
+  if (error) throw new Error(`insertReviewItem: ${error.message}`);
+  return data.id;
 }
 
-export async function getReviewItem(id: string): Promise<ReviewQueueItem | null> {
+export async function getReviewItem(
+  id: string,
+): Promise<ReviewQueueItem | null> {
   const { data, error } = await db()
-    .from('review_queue')
-    .select('*')
-    .eq('id', id)
-    .maybeSingle()
-  if (error) throw new Error(`getReviewItem: ${error.message}`)
-  return data
+    .from("review_queue")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw new Error(`getReviewItem: ${error.message}`);
+  return data;
 }
 
 export async function updateReviewStatus(
   id: string,
   status: ReviewStatus,
-  opts?: { editorNotes?: string; finalContent?: string; reviewedBy?: string }
+  opts?: { editorNotes?: string; finalContent?: string; reviewedBy?: string },
 ): Promise<void> {
   const { error } = await db()
-    .from('review_queue')
+    .from("review_queue")
     .update({
       status,
       editor_notes: opts?.editorNotes,
@@ -296,49 +310,54 @@ export async function updateReviewStatus(
       reviewed_by: opts?.reviewedBy,
       reviewed_at: new Date().toISOString(),
     })
-    .eq('id', id)
-  if (error) throw new Error(`updateReviewStatus: ${error.message}`)
+    .eq("id", id);
+  if (error) throw new Error(`updateReviewStatus: ${error.message}`);
 }
 
 // ─── Published Posts ──────────────────────────────────────────────────────────
 
 export async function insertPublishedPost(post: PublishedPost): Promise<void> {
-  const { error } = await db().from('published_posts').insert(post)
-  if (error) throw new Error(`insertPublishedPost: ${error.message}`)
+  const { error } = await db().from("published_posts").insert(post);
+  if (error) throw new Error(`insertPublishedPost: ${error.message}`);
 }
 
 // ─── Pipeline Runs ────────────────────────────────────────────────────────────
 
 export async function startPipelineRun(runId: string): Promise<void> {
-  const { error } = await db().from('pipeline_runs').insert({
+  const { error } = await db().from("pipeline_runs").insert({
     run_id: runId,
     started_at: new Date().toISOString(),
-    status: 'running',
+    status: "running",
     trends_fetched: 0,
     trends_scored: 0,
     items_generated: 0,
     items_queued: 0,
     errors: [],
-  })
-  if (error) throw new Error(`startPipelineRun: ${error.message}`)
+  });
+  if (error) throw new Error(`startPipelineRun: ${error.message}`);
 }
 
 export async function completePipelineRun(
   runId: string,
-  stats: { trendsF: number; trendsS: number; generated: number; queued: number },
-  errors: Array<{ stage: string; message: string; detail?: unknown }>
+  stats: {
+    trendsF: number;
+    trendsS: number;
+    generated: number;
+    queued: number;
+  },
+  errors: Array<{ stage: string; message: string; detail?: unknown }>,
 ): Promise<void> {
   const { error } = await db()
-    .from('pipeline_runs')
+    .from("pipeline_runs")
     .update({
-      completed_at:    new Date().toISOString(),
-      status:          errors.length === 0 ? 'completed' : 'failed',
-      trends_fetched:  stats.trendsF,
-      trends_scored:   stats.trendsS,
+      completed_at: new Date().toISOString(),
+      status: errors.length === 0 ? "completed" : "failed",
+      trends_fetched: stats.trendsF,
+      trends_scored: stats.trendsS,
       items_generated: stats.generated,
-      items_queued:    stats.queued,
+      items_queued: stats.queued,
       errors,
     })
-    .eq('run_id', runId)
-  if (error) throw new Error(`completePipelineRun: ${error.message}`)
+    .eq("run_id", runId);
+  if (error) throw new Error(`completePipelineRun: ${error.message}`);
 }

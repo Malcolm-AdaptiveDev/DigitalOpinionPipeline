@@ -9,8 +9,8 @@
  * Called by the Inngest scheduled function every 15 minutes.
  */
 
-import Parser from 'rss-parser'
-import { randomUUID } from 'crypto'
+import Parser from "rss-parser";
+import { randomUUID } from "crypto";
 import type {
   RawTrendItem,
   ScoredTrendItem,
@@ -19,336 +19,632 @@ import type {
   TrendUrgency,
   ContentPillar,
   Platform,
-} from '@/lib/pipeline/types'
-import { insertRawTrends, insertScoredTrend } from '@/lib/pipeline/db'
+} from "@/lib/pipeline/types";
+import { insertRawTrends, insertScoredTrend } from "@/lib/pipeline/db";
 
-const rssParser = new Parser({ timeout: 8000 })
+const rssParser = new Parser({ timeout: 8000 });
 
 // ─── Source Configuration ─────────────────────────────────────────────────────
 
-const RSS_SOURCES: Array<{ url: string; source: TrendSource; tags: string[] }> = [
-  {
-    url: 'https://techcrunch.com/feed/',
-    source: 'rss_news',
-    tags: ['tech', 'startups', 'ai', 'venture'],
-  },
-  {
-    url: 'https://feeds.reuters.com/reuters/technologyNews',
-    source: 'rss_news',
-    tags: ['tech', 'business', 'global'],
-  },
-  {
-    url: 'https://feeds.arstechnica.com/arstechnica/index',
-    source: 'rss_news',
-    tags: ['tech', 'science', 'policy'],
-  },
-  {
-    url: 'https://www.wired.com/feed/rss',
-    source: 'rss_news',
-    tags: ['culture', 'tech', 'future'],
-  },
-  {
-    url: 'https://feeds.bloomberg.com/technology/news.rss',
-    source: 'rss_news',
-    tags: ['finance', 'tech', 'markets'],
-  },
-  {
-    url: 'https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml',
-    source: 'rss_news',
-    tags: ['tech', 'society', 'policy'],
-  },
-  {
-    url: 'https://hnrss.org/frontpage',
-    source: 'hackernews',
-    tags: ['tech', 'programming', 'startups', 'ai'],
-  },
-]
+const RSS_SOURCES: Array<{ url: string; source: TrendSource; tags: string[] }> =
+  [
+    {
+      url: "https://techcrunch.com/feed/",
+      source: "rss_news",
+      tags: ["tech", "startups", "ai", "venture"],
+    },
+    {
+      url: "https://feeds.reuters.com/reuters/technologyNews",
+      source: "rss_news",
+      tags: ["tech", "business", "global"],
+    },
+    {
+      url: "https://feeds.arstechnica.com/arstechnica/index",
+      source: "rss_news",
+      tags: ["tech", "science", "policy"],
+    },
+    {
+      url: "https://www.wired.com/feed/rss",
+      source: "rss_news",
+      tags: ["culture", "tech", "future"],
+    },
+    {
+      url: "https://feeds.bloomberg.com/technology/news.rss",
+      source: "rss_news",
+      tags: ["finance", "tech", "markets"],
+    },
+    {
+      url: "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+      source: "rss_news",
+      tags: ["tech", "society", "policy"],
+    },
+    {
+      url: "https://hnrss.org/frontpage",
+      source: "hackernews",
+      tags: ["tech", "programming", "startups", "ai"],
+    },
+  ];
 
 // ─── Persona Interest Graphs ──────────────────────────────────────────────────
 // Keywords that signal high relevance for each persona.
 // Score = (keyword_matches / total_keywords) × weight_multipliers
 
-const PERSONA_INTEREST_GRAPH: Record<PersonaId, {
-  high:    string[]    // 3× weight
-  medium:  string[]    // 1.5× weight
-  low:     string[]    // 0.8× weight (dampens relevance)
-}> = {
+const PERSONA_INTEREST_GRAPH: Record<
+  PersonaId,
+  {
+    high: string[]; // 3× weight
+    medium: string[]; // 1.5× weight
+    low: string[]; // 0.8× weight (dampens relevance)
+  }
+> = {
   nova: {
-    high:   ['breakthrough', 'discovery', 'innovation', 'ai', 'machine learning',
-             'clean energy', 'solar', 'biotech', 'longevity', 'fusion', 'startup',
-             'funding', 'launch', 'milestone', 'progress', 'record'],
-    medium: ['climate', 'health', 'research', 'technology', 'science', 'economy',
-             'growth', 'investment', 'future', 'announced'],
-    low:    ['scandal', 'fraud', 'collapse', 'lawsuit', 'layoffs', 'crisis'],
+    high: [
+      "breakthrough",
+      "discovery",
+      "innovation",
+      "ai",
+      "machine learning",
+      "clean energy",
+      "solar",
+      "biotech",
+      "longevity",
+      "fusion",
+      "startup",
+      "funding",
+      "launch",
+      "milestone",
+      "progress",
+      "record",
+    ],
+    medium: [
+      "climate",
+      "health",
+      "research",
+      "technology",
+      "science",
+      "economy",
+      "growth",
+      "investment",
+      "future",
+      "announced",
+    ],
+    low: ["scandal", "fraud", "collapse", "lawsuit", "layoffs", "crisis"],
   },
   cynic: {
-    high:   ['fraud', 'lawsuit', 'investigation', 'overstated', 'misleading', 'funded by',
-             'conflict of interest', 'layoffs', 'bankruptcy', 'bubble', 'hype',
-             'retraction', 'correction', 'exposed', 'scandal', 'manipulation'],
-    medium: ['earnings', 'vc', 'valuation', 'regulation', 'policy', 'lobbying',
-             'market', 'study', 'report', 'analysis', 'claims'],
-    low:    ['breakthrough', 'revolutionary', 'amazing', 'unprecedented'],
+    high: [
+      "fraud",
+      "lawsuit",
+      "investigation",
+      "overstated",
+      "misleading",
+      "funded by",
+      "conflict of interest",
+      "layoffs",
+      "bankruptcy",
+      "bubble",
+      "hype",
+      "retraction",
+      "correction",
+      "exposed",
+      "scandal",
+      "manipulation",
+    ],
+    medium: [
+      "earnings",
+      "vc",
+      "valuation",
+      "regulation",
+      "policy",
+      "lobbying",
+      "market",
+      "study",
+      "report",
+      "analysis",
+      "claims",
+    ],
+    low: ["breakthrough", "revolutionary", "amazing", "unprecedented"],
   },
   oracle: {
-    high:   ['data', 'study', 'report', 'survey', 'statistics', 'model', 'forecast',
-             'prediction', 'analysis', 'percentage', 'growth rate', 'market size',
-             'research', 'findings', 'metrics', 'benchmark'],
-    medium: ['economy', 'ai', 'adoption', 'trend', 'inflation', 'employment',
-             'productivity', 'revenue', 'crypto', 'index'],
-    low:    ['opinion', 'feel', 'believe', 'spiritual', 'art'],
+    high: [
+      "data",
+      "study",
+      "report",
+      "survey",
+      "statistics",
+      "model",
+      "forecast",
+      "prediction",
+      "analysis",
+      "percentage",
+      "growth rate",
+      "market size",
+      "research",
+      "findings",
+      "metrics",
+      "benchmark",
+    ],
+    medium: [
+      "economy",
+      "ai",
+      "adoption",
+      "trend",
+      "inflation",
+      "employment",
+      "productivity",
+      "revenue",
+      "crypto",
+      "index",
+    ],
+    low: ["opinion", "feel", "believe", "spiritual", "art"],
   },
   rebel: {
-    high:   ['platform', 'creator', 'algorithm', 'ban', 'censorship', 'workers',
-             'gig economy', 'strike', 'protest', 'inequality', 'corporate',
-             'exploitation', 'union', 'surveillance', 'privacy', 'monopoly'],
-    medium: ['culture', 'music', 'art', 'independent', 'community', 'gen z',
-             'social media', 'influencer', 'content', 'tiktok'],
-    low:    ['ipo', 'valuation', 'earnings', 'quarterly', 'shareholders'],
+    high: [
+      "platform",
+      "creator",
+      "algorithm",
+      "ban",
+      "censorship",
+      "workers",
+      "gig economy",
+      "strike",
+      "protest",
+      "inequality",
+      "corporate",
+      "exploitation",
+      "union",
+      "surveillance",
+      "privacy",
+      "monopoly",
+    ],
+    medium: [
+      "culture",
+      "music",
+      "art",
+      "independent",
+      "community",
+      "gen z",
+      "social media",
+      "influencer",
+      "content",
+      "tiktok",
+    ],
+    low: ["ipo", "valuation", "earnings", "quarterly", "shareholders"],
   },
   sage: {
-    high:   ['meaning', 'philosophy', 'wisdom', 'mental health', 'anxiety',
-             'uncertainty', 'change', 'leadership', 'ethics', 'values',
-             'purpose', 'burnout', 'society', 'human', 'consciousness'],
-    medium: ['technology', 'future', 'debate', 'conflict', 'culture', 'politics',
-             'environment', 'education', 'community'],
-    low:    ['stock', 'crypto', 'ipo', 'quarterly', 'earnings'],
+    high: [
+      "meaning",
+      "philosophy",
+      "wisdom",
+      "mental health",
+      "anxiety",
+      "uncertainty",
+      "change",
+      "leadership",
+      "ethics",
+      "values",
+      "purpose",
+      "burnout",
+      "society",
+      "human",
+      "consciousness",
+    ],
+    medium: [
+      "technology",
+      "future",
+      "debate",
+      "conflict",
+      "culture",
+      "politics",
+      "environment",
+      "education",
+      "community",
+    ],
+    low: ["stock", "crypto", "ipo", "quarterly", "earnings"],
   },
-}
+};
 
 // Pillar mapping: given a persona and dominant keyword clusters,
 // what content pillar should this become?
-const PILLAR_MAP: Record<PersonaId, Array<{ tags: string[]; pillar: ContentPillar; platform: Platform }>> = {
+const PILLAR_MAP: Record<
+  PersonaId,
+  Array<{ tags: string[]; pillar: ContentPillar; platform: Platform }>
+> = {
   nova: [
-    { tags: ['breakthrough', 'discovery', 'launch'],     pillar: 'breakthrough',    platform: 'x' },
-    { tags: ['scandal', 'fraud', 'hype'],                pillar: 'reframe',         platform: 'x' },
-    { tags: ['startup', 'founder', 'builder'],           pillar: 'builder_spotlight', platform: 'tiktok' },
-    { tags: ['future', 'prediction', 'decade'],          pillar: 'future_vision',   platform: 'youtube' },
-    { tags: ['health', 'community', 'human'],            pillar: 'human_moment',    platform: 'instagram' },
+    {
+      tags: ["breakthrough", "discovery", "launch"],
+      pillar: "breakthrough",
+      platform: "x",
+    },
+    { tags: ["scandal", "fraud", "hype"], pillar: "reframe", platform: "x" },
+    {
+      tags: ["startup", "founder", "builder"],
+      pillar: "builder_spotlight",
+      platform: "tiktok",
+    },
+    {
+      tags: ["future", "prediction", "decade"],
+      pillar: "future_vision",
+      platform: "youtube",
+    },
+    {
+      tags: ["health", "community", "human"],
+      pillar: "human_moment",
+      platform: "instagram",
+    },
   ],
   cynic: [
-    { tags: ['study', 'report', 'claims'],               pillar: 'debunk',          platform: 'x' },
-    { tags: ['funded', 'lobbying', 'conflict'],          pillar: 'follow_the_money', platform: 'x' },
-    { tags: ['bubble', 'history', 'precedent'],          pillar: 'history_repeating', platform: 'youtube' },
-    { tags: ['week', 'news', 'misleading'],              pillar: 'cold_read',       platform: 'x' },
-    { tags: ['corrected', 'wrong', 'retraction'],        pillar: 'reluctant_credit', platform: 'substack' },
+    { tags: ["study", "report", "claims"], pillar: "debunk", platform: "x" },
+    {
+      tags: ["funded", "lobbying", "conflict"],
+      pillar: "follow_the_money",
+      platform: "x",
+    },
+    {
+      tags: ["bubble", "history", "precedent"],
+      pillar: "history_repeating",
+      platform: "youtube",
+    },
+    {
+      tags: ["week", "news", "misleading"],
+      pillar: "cold_read",
+      platform: "x",
+    },
+    {
+      tags: ["corrected", "wrong", "retraction"],
+      pillar: "reluctant_credit",
+      platform: "substack",
+    },
   ],
   oracle: [
-    { tags: ['data', 'statistics', 'metrics'],           pillar: 'signal_report',   platform: 'x' },
-    { tags: ['forecast', 'model', 'prediction'],         pillar: 'the_model',       platform: 'x' },
-    { tags: ['previous', 'predicted', 'correct'],        pillar: 'scorecard',       platform: 'x' },
-    { tags: ['overlooked', 'missed', 'buried'],          pillar: 'overlooked_number', platform: 'x' },
-    { tags: ['debate', 'argument', 'claim'],             pillar: 'arbiter',         platform: 'x' },
+    {
+      tags: ["data", "statistics", "metrics"],
+      pillar: "signal_report",
+      platform: "x",
+    },
+    {
+      tags: ["forecast", "model", "prediction"],
+      pillar: "the_model",
+      platform: "x",
+    },
+    {
+      tags: ["previous", "predicted", "correct"],
+      pillar: "scorecard",
+      platform: "x",
+    },
+    {
+      tags: ["overlooked", "missed", "buried"],
+      pillar: "overlooked_number",
+      platform: "x",
+    },
+    { tags: ["debate", "argument", "claim"], pillar: "arbiter", platform: "x" },
   ],
   rebel: [
-    { tags: ['corporate', 'ban', 'exploit'],             pillar: 'callout',         platform: 'tiktok' },
-    { tags: ['culture', 'trend', 'viral'],               pillar: 'culture_read',    platform: 'instagram' },
-    { tags: ['creator', 'artist', 'independent'],        pillar: 'creator_spotlight', platform: 'tiktok' },
-    { tags: ['system', 'power', 'structure'],            pillar: 'manifesto',       platform: 'substack' },
-    { tags: ['beauty', 'art', 'quiet'],                  pillar: 'moment_of_softness', platform: 'tiktok' },
+    {
+      tags: ["corporate", "ban", "exploit"],
+      pillar: "callout",
+      platform: "tiktok",
+    },
+    {
+      tags: ["culture", "trend", "viral"],
+      pillar: "culture_read",
+      platform: "instagram",
+    },
+    {
+      tags: ["creator", "artist", "independent"],
+      pillar: "creator_spotlight",
+      platform: "tiktok",
+    },
+    {
+      tags: ["system", "power", "structure"],
+      pillar: "manifesto",
+      platform: "substack",
+    },
+    {
+      tags: ["beauty", "art", "quiet"],
+      pillar: "moment_of_softness",
+      platform: "tiktok",
+    },
   ],
   sage: [
-    { tags: ['uncertainty', 'anxiety', 'overwhelm'],     pillar: 'morning_question', platform: 'x' },
-    { tags: ['philosophy', 'stoic', 'wisdom'],           pillar: 'text_and_now',    platform: 'x' },
-    { tags: ['debate', 'conflict', 'argument'],          pillar: 'mediation',       platform: 'x' },
-    { tags: ['week', 'reflect', 'meaning'],              pillar: 'weekly_letter',   platform: 'substack' },
-    { tags: ['silence', 'pause', 'stillness'],           pillar: 'long_silence',    platform: 'x' },
+    {
+      tags: ["uncertainty", "anxiety", "overwhelm"],
+      pillar: "morning_question",
+      platform: "x",
+    },
+    {
+      tags: ["philosophy", "stoic", "wisdom"],
+      pillar: "text_and_now",
+      platform: "x",
+    },
+    {
+      tags: ["debate", "conflict", "argument"],
+      pillar: "mediation",
+      platform: "x",
+    },
+    {
+      tags: ["week", "reflect", "meaning"],
+      pillar: "weekly_letter",
+      platform: "substack",
+    },
+    {
+      tags: ["silence", "pause", "stillness"],
+      pillar: "long_silence",
+      platform: "x",
+    },
   ],
-}
+};
 
 // ─── Stage 1: Ingestion ───────────────────────────────────────────────────────
 
 export async function ingestTrends(): Promise<RawTrendItem[]> {
-  const items: RawTrendItem[] = []
-  const errors: string[] = []
+  const items: RawTrendItem[] = [];
+  const errors: string[] = [];
 
   await Promise.allSettled(
     RSS_SOURCES.map(async ({ url, source, tags }) => {
       try {
-        const feed = await rssParser.parseURL(url)
+        const feed = await rssParser.parseURL(url);
         const fresh = (feed.items ?? [])
-          .filter(item => {
-            if (!item.pubDate) return true
-            const age = Date.now() - new Date(item.pubDate).getTime()
-            return age < 6 * 3600 * 1000  // Only items < 6 hours old
+          .filter((item) => {
+            if (!item.pubDate) return true;
+            const age = Date.now() - new Date(item.pubDate).getTime();
+            return age < 6 * 3600 * 1000; // Only items < 6 hours old
           })
-          .slice(0, 10)
+          .slice(0, 10);
 
         for (const item of fresh) {
           const content = [item.title, item.contentSnippet, item.content]
             .filter(Boolean)
-            .join(' ')
-            .slice(0, 2000)
+            .join(" ")
+            .slice(0, 2000);
 
           // Auto-extract tags from content
-          const autoTags = extractTags(content)
+          const autoTags = extractTags(content);
 
           items.push({
-            id:           randomUUID(),
+            id: randomUUID(),
             source,
-            topic:        item.title ?? 'untitled',
-            headline:     item.title ?? '',
-            url:          item.link ?? '',
+            topic: item.title ?? "untitled",
+            headline: item.title ?? "",
+            url: item.link ?? "",
             published_at: item.pubDate
               ? new Date(item.pubDate).toISOString()
               : new Date().toISOString(),
-            raw_content:  content,
-            tags:         [...new Set([...tags, ...autoTags])],
-            fetched_at:   new Date().toISOString(),
-          })
+            raw_content: content,
+            tags: [...new Set([...tags, ...autoTags])],
+            fetched_at: new Date().toISOString(),
+          });
         }
       } catch (err) {
-        errors.push(`${source} (${url}): ${(err as Error).message}`)
+        errors.push(`${source} (${url}): ${(err as Error).message}`);
       }
-    })
-  )
+    }),
+  );
 
   if (errors.length > 0) {
-    console.warn(`[Ingestion] ${errors.length} source(s) failed:`, errors)
+    console.warn(`[Ingestion] ${errors.length} source(s) failed:`, errors);
   }
 
   // Deduplicate by URL
-  const seen = new Set<string>()
-  const deduped = items.filter(item => {
-    if (!item.url || seen.has(item.url)) return false
-    seen.add(item.url)
-    return true
-  })
+  const seen = new Set<string>();
+  const deduped = items.filter((item) => {
+    if (!item.url || seen.has(item.url)) return false;
+    seen.add(item.url);
+    return true;
+  });
 
   if (deduped.length > 0) {
-    await insertRawTrends(deduped)
+    await insertRawTrends(deduped);
   }
 
-  console.log(`[Ingestion] ${deduped.length} items ingested (${items.length - deduped.length} duplicates removed)`)
-  return deduped
+  console.log(
+    `[Ingestion] ${deduped.length} items ingested (${items.length - deduped.length} duplicates removed)`,
+  );
+  return deduped;
 }
 
 // ─── Tag Extraction ───────────────────────────────────────────────────────────
 
 function extractTags(text: string): string[] {
-  const lower = text.toLowerCase()
+  const lower = text.toLowerCase();
   const tagGroups: Record<string, string[]> = {
-    ai:          ['artificial intelligence', 'machine learning', 'llm', 'gpt', 'ai model', 'generative ai'],
-    climate:     ['climate', 'solar', 'wind energy', 'carbon', 'emissions', 'net zero'],
-    crypto:      ['bitcoin', 'ethereum', 'crypto', 'blockchain', 'defi', 'nft'],
-    labor:       ['workers', 'strike', 'layoffs', 'union', 'gig economy', 'wages'],
-    finance:     ['ipo', 'earnings', 'valuation', 'market cap', 'revenue', 'profit'],
-    health:      ['mental health', 'longevity', 'biotech', 'clinical trial', 'fda'],
-    policy:      ['regulation', 'congress', 'legislation', 'law', 'ruling', 'court'],
-    platform:    ['tiktok', 'instagram', 'youtube', 'twitter', 'meta', 'google', 'apple'],
-    culture:     ['viral', 'trending', 'gen z', 'millennial', 'influencer', 'creator'],
-    startup:     ['startup', 'founder', 'seed round', 'series a', 'vc', 'accelerator'],
-  }
+    ai: [
+      "artificial intelligence",
+      "machine learning",
+      "llm",
+      "gpt",
+      "ai model",
+      "generative ai",
+    ],
+    climate: [
+      "climate",
+      "solar",
+      "wind energy",
+      "carbon",
+      "emissions",
+      "net zero",
+    ],
+    crypto: ["bitcoin", "ethereum", "crypto", "blockchain", "defi", "nft"],
+    labor: ["workers", "strike", "layoffs", "union", "gig economy", "wages"],
+    finance: [
+      "ipo",
+      "earnings",
+      "valuation",
+      "market cap",
+      "revenue",
+      "profit",
+    ],
+    health: ["mental health", "longevity", "biotech", "clinical trial", "fda"],
+    policy: ["regulation", "congress", "legislation", "law", "ruling", "court"],
+    platform: [
+      "tiktok",
+      "instagram",
+      "youtube",
+      "twitter",
+      "meta",
+      "google",
+      "apple",
+    ],
+    culture: [
+      "viral",
+      "trending",
+      "gen z",
+      "millennial",
+      "influencer",
+      "creator",
+    ],
+    startup: [
+      "startup",
+      "founder",
+      "seed round",
+      "series a",
+      "vc",
+      "accelerator",
+    ],
+  };
 
-  const found: string[] = []
+  const found: string[] = [];
   for (const [tag, keywords] of Object.entries(tagGroups)) {
-    if (keywords.some(kw => lower.includes(kw))) {
-      found.push(tag)
+    if (keywords.some((kw) => lower.includes(kw))) {
+      found.push(tag);
     }
   }
-  return found
+  return found;
 }
 
 // ─── Stage 2: Persona Relevance Scoring ──────────────────────────────────────
 
 export function scorePersonaRelevance(
   item: RawTrendItem,
-  personaId: PersonaId
+  personaId: PersonaId,
 ): number {
-  const text   = `${item.headline} ${item.raw_content}`.toLowerCase()
-  const graph  = PERSONA_INTEREST_GRAPH[personaId]
-  let score    = 0
-  let matches  = 0
+  const text = `${item.headline} ${item.raw_content}`.toLowerCase();
+  const graph = PERSONA_INTEREST_GRAPH[personaId];
+  let score = 0;
+  let matches = 0;
 
   for (const kw of graph.high) {
-    if (text.includes(kw)) { score += 3; matches++ }
+    if (text.includes(kw)) {
+      score += 3;
+      matches++;
+    }
   }
   for (const kw of graph.medium) {
-    if (text.includes(kw)) { score += 1.5; matches++ }
+    if (text.includes(kw)) {
+      score += 1.5;
+      matches++;
+    }
   }
   for (const kw of graph.low) {
-    if (text.includes(kw)) { score -= 0.5 }
+    if (text.includes(kw)) {
+      score -= 0.5;
+    }
   }
 
   // Tag overlap bonus
-  const tagBonus = item.tags.filter(t =>
-    [...graph.high, ...graph.medium].some(kw => kw.includes(t) || t.includes(kw))
-  ).length * 0.5
-  score += tagBonus
+  const tagBonus =
+    item.tags.filter((t) =>
+      [...graph.high, ...graph.medium].some(
+        (kw) => kw.includes(t) || t.includes(kw),
+      ),
+    ).length * 0.5;
+  score += tagBonus;
 
   // Normalise to 0–1 against a reasonable max
-  const maxPossible = Math.min(matches * 3 + tagBonus, 15)
-  return maxPossible > 0 ? Math.min(1, score / maxPossible) : 0
+  const maxPossible = Math.min(matches * 3 + tagBonus, 15);
+  return maxPossible > 0 ? Math.min(1, score / maxPossible) : 0;
 }
 
 function calcUrgency(item: RawTrendItem): TrendUrgency {
   const ageHours =
-    (Date.now() - new Date(item.published_at).getTime()) / 3600000
-  if (ageHours < 1)  return 'high'
-  if (ageHours < 4)  return 'medium'
-  return 'low'
+    (Date.now() - new Date(item.published_at).getTime()) / 3600000;
+  if (ageHours < 1) return "high";
+  if (ageHours < 4) return "medium";
+  return "low";
 }
 
 function suggestPillarAndPlatform(
   item: RawTrendItem,
-  personaId: PersonaId
+  personaId: PersonaId,
 ): { pillar: ContentPillar; platform: Platform } {
-  const text   = `${item.headline} ${item.raw_content}`.toLowerCase()
-  const pillarOptions = PILLAR_MAP[personaId]
+  const text = `${item.headline} ${item.raw_content}`.toLowerCase();
+  const pillarOptions = PILLAR_MAP[personaId];
 
   for (const option of pillarOptions) {
-    if (option.tags.some(tag => text.includes(tag) || item.tags.includes(tag))) {
-      return { pillar: option.pillar, platform: option.platform }
+    if (
+      option.tags.some((tag) => text.includes(tag) || item.tags.includes(tag))
+    ) {
+      return { pillar: option.pillar, platform: option.platform };
     }
   }
   // Default fallbacks per persona
-  const defaults: Record<PersonaId, { pillar: ContentPillar; platform: Platform }> = {
-    nova:   { pillar: 'breakthrough',    platform: 'x' },
-    cynic:  { pillar: 'debunk',          platform: 'x' },
-    oracle: { pillar: 'signal_report',   platform: 'x' },
-    rebel:  { pillar: 'callout',         platform: 'tiktok' },
-    sage:   { pillar: 'morning_question', platform: 'x' },
-  }
-  return defaults[personaId]
+  const defaults: Record<
+    PersonaId,
+    { pillar: ContentPillar; platform: Platform }
+  > = {
+    nova: { pillar: "breakthrough", platform: "x" },
+    cynic: { pillar: "debunk", platform: "x" },
+    oracle: { pillar: "signal_report", platform: "x" },
+    rebel: { pillar: "callout", platform: "tiktok" },
+    sage: { pillar: "morning_question", platform: "x" },
+  };
+  return defaults[personaId];
 }
 
 export async function scoreAndRoute(
   items: RawTrendItem[],
-  relevanceThreshold = 0.35
+  relevanceThreshold = 0.35,
 ): Promise<ScoredTrendItem[]> {
-  const scored: ScoredTrendItem[] = []
+  const scored: ScoredTrendItem[] = [];
 
   for (const item of items) {
     const scores: Record<PersonaId, number> = {
-      nova: 0, cynic: 0, oracle: 0, rebel: 0, sage: 0,
-    }
+      nova: 0,
+      cynic: 0,
+      oracle: 0,
+      rebel: 0,
+      sage: 0,
+    };
 
-    for (const personaId of ['nova','cynic','oracle','rebel','sage'] as PersonaId[]) {
-      scores[personaId] = scorePersonaRelevance(item, personaId)
+    for (const personaId of [
+      "nova",
+      "cynic",
+      "oracle",
+      "rebel",
+      "sage",
+    ] as PersonaId[]) {
+      scores[personaId] = scorePersonaRelevance(item, personaId);
     }
 
     const assigned = (Object.entries(scores) as [PersonaId, number][])
       .filter(([, score]) => score >= relevanceThreshold)
       .sort(([, a], [, b]) => b - a)
-      .map(([id]) => id)
+      .map(([id]) => id);
 
     // Only process items that are relevant to at least one persona
-    if (assigned.length === 0) continue
+    if (assigned.length === 0) continue;
 
-    const urgency       = calcUrgency(item)
-    const urgencyRank   = urgency === 'high' ? 1 : urgency === 'medium' ? 2 : 3
+    const urgency = calcUrgency(item);
+    const urgencyRank = urgency === "high" ? 1 : urgency === "medium" ? 2 : 3;
 
     const scored_item: ScoredTrendItem = {
       ...item,
-      relevance_scores:  scores,
+      relevance_scores: scores,
       urgency,
       assigned_personas: assigned,
-      network_event:     assigned.length >= 2,
-    }
+      network_event: assigned.length >= 2,
+    };
 
-    await insertScoredTrend({ ...scored_item, urgency_rank: urgencyRank } as ScoredTrendItem & { urgency_rank: number; processed: boolean })
-    scored.push(scored_item)
+    await insertScoredTrend({
+      ...scored_item,
+      urgency_rank: urgencyRank,
+      processed: false,
+    });
+    scored.push(scored_item);
   }
 
-  console.log(`[Scoring] ${scored.length}/${items.length} items scored above threshold. Network events: ${scored.filter(i => i.network_event).length}`)
-  return scored
+  console.log(
+    `[Scoring] ${scored.length}/${items.length} items scored above threshold. Network events: ${scored.filter((i) => i.network_event).length}`,
+  );
+  return scored;
 }
