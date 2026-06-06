@@ -412,6 +412,39 @@ export async function insertReviewItem(
   return data.id;
 }
 
+function normalizeReviewTopic(value: string | null | undefined): string {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+export async function getQueuedPersonasForTrend(
+  item: Pick<ScoredTrendItem, "id" | "topic">,
+  limit = 500,
+): Promise<Set<PersonaId>> {
+  const { data, error } = await db()
+    .from("review_queue")
+    .select("generation, request")
+    .order("queued_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`getQueuedPersonasForTrend: ${error.message}`);
+
+  const topic = normalizeReviewTopic(item.topic);
+  const personas = new Set<PersonaId>();
+
+  for (const row of data ?? []) {
+    const review = row as Pick<ReviewQueueItem, "generation" | "request">;
+    const request = review.request;
+    const sameTrend = request?.trendItemId === item.id;
+    const sameTopic = normalizeReviewTopic(request?.topic) === topic;
+    if (!sameTrend && !sameTopic) continue;
+    if (review.generation?.persona) personas.add(review.generation.persona);
+  }
+
+  return personas;
+}
+
 export async function getReviewItem(
   id: string,
 ): Promise<ReviewQueueItem | null> {

@@ -39,6 +39,7 @@ import {
   getReviewItem,
   startPipelineRun,
   completePipelineRun,
+  getQueuedPersonasForTrend,
 } from "@/lib/pipeline/db";
 import { getPipelineConfig } from "@/lib/pipeline/config";
 import type {
@@ -101,6 +102,30 @@ async function dedupeScoredItemsForProcessing(
 }
 
 // ─── Stage 3→5: Process a single trend item for one persona ──────────────────
+
+function selectPersonasForTrend(
+  item: ScoredTrendItem,
+  limit: number,
+  alreadyQueued: Set<PersonaId>,
+): PersonaId[] {
+  const ranked = item.assigned_personas
+    .slice()
+    .sort(
+      (a, b) =>
+        (item.relevance_scores[b] ?? 0) - (item.relevance_scores[a] ?? 0),
+    );
+  const fresh = ranked.filter((persona) => !alreadyQueued.has(persona));
+  const candidates =
+    fresh.length > 0 ? fresh : ranked.filter((persona) => alreadyQueued.has(persona));
+  return candidates.slice(0, Math.max(0, limit));
+}
+
+function allAssignedPersonasQueued(
+  item: ScoredTrendItem,
+  queuedPersonas: Set<PersonaId>,
+): boolean {
+  return item.assigned_personas.every((persona) => queuedPersonas.has(persona));
+}
 
 async function processTrendForPersona(
   item: ScoredTrendItem,
@@ -309,10 +334,20 @@ export async function runTrendPipeline(): Promise<void> {
         `\n[Pipeline] Processing: "${item.topic}" → assigned: [${item.assigned_personas.join(", ")}]`,
       );
 
-      // Process each assigned persona sequentially to avoid thundering herd
+      const alreadyQueuedPersonas = await getQueuedPersonasForTrend(item);
+      const assignedPersonas = selectPersonasForTrend(
+        item,
+        config.max_personas_per_trend,
+        alreadyQueuedPersonas,
+      );
+
+      console.log(
+        `[Pipeline] Selected personas this run: [${assignedPersonas.join(", ")}]. Already queued: [${[...alreadyQueuedPersonas].join(", ")}]`,
+      );
+
+      // Process each selected persona sequentially to avoid thundering herd
       const primaryResults: GenerationResult[] = [];
 
-      const assignedPersonas = item.assigned_personas.slice(0, config.max_personas_per_trend);
       for (const personaId of assignedPersonas) {
         const result = await processTrendForPersona(
           item,
@@ -324,6 +359,7 @@ export async function runTrendPipeline(): Promise<void> {
           generated++;
           queued++;
           primaryResults.push(result);
+          alreadyQueuedPersonas.add(personaId);
 
           // Brief pause between personas to be polite to the API
           await new Promise((r) => setTimeout(r, 300));
@@ -413,7 +449,13 @@ export async function runTrendPipeline(): Promise<void> {
         }
       }
 
-      await markTrendProcessed(item.id);
+      if (allAssignedPersonasQueued(item, alreadyQueuedPersonas)) {
+        await markTrendProcessed(item.id);
+      } else {
+        console.log(
+          `[Pipeline] Keeping "${item.topic}" unprocessed so remaining personas can rotate in later runs.`,
+        );
+      }
     }
   } catch (err) {
     runErrors.push({
