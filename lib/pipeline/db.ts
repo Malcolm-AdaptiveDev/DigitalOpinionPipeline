@@ -239,16 +239,105 @@ export async function writeBeliefEvolution(
 
 export async function insertRawTrends(items: RawTrendItem[]): Promise<void> {
   if (items.length === 0) return;
-  const { error } = await db().from("trending_queue").insert(items);
+  const { error } = await db()
+    .from("trending_queue")
+    .upsert(items, { onConflict: "id", ignoreDuplicates: true });
   if (error) throw new Error(`insertRawTrends: ${error.message}`);
+}
+
+function normalizeTrendIdentity(value: string | null | undefined): string {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function trendIdentityKeys(
+  item: Pick<RawTrendItem, "source" | "url" | "topic" | "headline">,
+): string[] {
+  const keys = new Set<string>();
+  const source = normalizeTrendIdentity(item.source);
+  const url = normalizeTrendIdentity(item.url);
+  const topic = normalizeTrendIdentity(item.topic);
+  const headline = normalizeTrendIdentity(item.headline);
+
+  if (url) keys.add(`${source}:url:${url}`);
+  if (topic) keys.add(`${source}:topic:${topic}`);
+  if (headline) keys.add(`${source}:headline:${headline}`);
+  if (topic) keys.add(`any:topic:${topic}`);
+
+  return [...keys];
+}
+
+export async function getExistingTrendIdentityKeys(
+  items: Array<Pick<RawTrendItem, "source" | "url" | "topic" | "headline">>,
+  tables: Array<"trending_queue" | "scored_trends"> = [
+    "trending_queue",
+    "scored_trends",
+  ],
+): Promise<Set<string>> {
+  const urls = [...new Set(items.map((item) => item.url).filter(Boolean))];
+  const topics = [...new Set(items.map((item) => item.topic).filter(Boolean))];
+  const headlines = [
+    ...new Set(items.map((item) => item.headline).filter(Boolean)),
+  ];
+
+  if (urls.length === 0 && topics.length === 0 && headlines.length === 0) {
+    return new Set();
+  }
+
+  const queries = tables.flatMap((table) => [
+    ...(urls.length > 0
+      ? [db().from(table).select("source, url, topic, headline").in("url", urls)]
+      : []),
+    ...(topics.length > 0
+      ? [
+          db()
+            .from(table)
+            .select("source, url, topic, headline")
+            .in("topic", topics),
+        ]
+      : []),
+    ...(headlines.length > 0
+      ? [
+          db()
+            .from(table)
+            .select("source, url, topic, headline")
+            .in("headline", headlines),
+        ]
+      : []),
+  ]);
+
+  const responses = await Promise.all(queries);
+  const keys = new Set<string>();
+  for (const response of responses) {
+    if (response.error) {
+      throw new Error(`getExistingTrendIdentityKeys: ${response.error.message}`);
+    }
+    for (const row of response.data ?? []) {
+      for (const key of trendIdentityKeys(row as RawTrendItem)) keys.add(key);
+    }
+  }
+  return keys;
 }
 
 export async function insertScoredTrend(
   item: ScoredTrendItem & { urgency_rank?: number; processed?: boolean },
-): Promise<void> {
+): Promise<boolean> {
+  const existing = await getExistingTrendIdentityKeys([item], ["scored_trends"]);
+  if (trendIdentityKeys(item).some((key) => existing.has(key))) {
+    console.log(
+      `[Scoring] Skipping duplicate scored trend: "${item.topic}" (${item.source})`,
+    );
+    return false;
+  }
+
   const row = { processed: false, ...item };
-  const { error } = await db().from("scored_trends").insert(row);
+  const { error } = await db()
+    .from("scored_trends")
+    .upsert(row, { onConflict: "id", ignoreDuplicates: true });
   if (error) throw new Error(`insertScoredTrend: ${error.message}`);
+  return true;
 }
 
 export async function getUnprocessedTrends(

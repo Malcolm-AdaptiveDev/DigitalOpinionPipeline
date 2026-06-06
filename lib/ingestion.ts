@@ -10,7 +10,7 @@
  */
 
 import Parser from "rss-parser";
-import { randomUUID } from "crypto";
+import { createHash } from "crypto";
 import type {
   RawTrendItem,
   ScoredTrendItem,
@@ -20,7 +20,11 @@ import type {
   ContentPillar,
   Platform,
 } from "@/lib/pipeline/types";
-import { insertRawTrends, insertScoredTrend } from "@/lib/pipeline/db";
+import {
+  getExistingTrendIdentityKeys,
+  insertRawTrends,
+  insertScoredTrend,
+} from "@/lib/pipeline/db";
 
 const rssParser = new Parser({ timeout: 8000 });
 function withTimeout<T>(
@@ -35,6 +39,41 @@ function withTimeout<T>(
   return Promise.race([promise, timeout]).finally(() =>
     clearTimeout(timeoutId),
   ) as Promise<T>;
+}
+
+function normalizeTrendIdentity(value: string | null | undefined): string {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function trendIdentityKeys(
+  item: Pick<RawTrendItem, "source" | "url" | "topic" | "headline">,
+): string[] {
+  const keys = new Set<string>();
+  const source = normalizeTrendIdentity(item.source);
+  const url = normalizeTrendIdentity(item.url);
+  const topic = normalizeTrendIdentity(item.topic);
+  const headline = normalizeTrendIdentity(item.headline);
+
+  if (url) keys.add(`${source}:url:${url}`);
+  if (topic) keys.add(`${source}:topic:${topic}`);
+  if (headline) keys.add(`${source}:headline:${headline}`);
+  if (topic) keys.add(`any:topic:${topic}`);
+
+  return [...keys];
+}
+
+function trendStableId(
+  item: Pick<RawTrendItem, "source" | "url" | "topic" | "headline">,
+): string {
+  const topic = normalizeTrendIdentity(item.topic);
+  const source = normalizeTrendIdentity(item.source);
+  const url = normalizeTrendIdentity(item.url);
+  const headline = normalizeTrendIdentity(item.headline);
+  const canonical = topic || `${source}|${url}|${headline}`;
+  return createHash("sha256").update(canonical).digest("hex").slice(0, 32);
 }
 // ─── Source Configuration ─────────────────────────────────────────────────────
 
@@ -418,7 +457,12 @@ export async function ingestTrends(): Promise<RawTrendItem[]> {
           const autoTags = extractTags(content);
 
           items.push({
-            id: randomUUID(),
+            id: trendStableId({
+              source,
+              topic: item.title ?? "untitled",
+              headline: item.title ?? "",
+              url: item.link ?? "",
+            }),
             source,
             topic: item.title ?? "untitled",
             headline: item.title ?? "",
@@ -441,22 +485,37 @@ export async function ingestTrends(): Promise<RawTrendItem[]> {
     console.warn(`[Ingestion] ${errors.length} source(s) failed:`, errors);
   }
 
-  // Deduplicate by URL
+  // Deduplicate by source/url/topic/headline. Topic is global: if it was
+  // already entered by any source, skip it before it can fan out downstream.
   const seen = new Set<string>();
   const deduped = items.filter((item) => {
-    if (!item.url || seen.has(item.url)) return false;
-    seen.add(item.url);
+    const keys = trendIdentityKeys(item);
+    if (keys.some((key) => seen.has(key))) return false;
+    for (const key of keys) seen.add(key);
     return true;
   });
 
-  if (deduped.length > 0) {
-    await insertRawTrends(deduped);
+  const existingKeys = await getExistingTrendIdentityKeys(deduped);
+  const fresh = deduped.filter((item) => {
+    const isDuplicate = trendIdentityKeys(item).some((key) =>
+      existingKeys.has(key),
+    );
+    if (isDuplicate) {
+      console.log(
+        `[Ingestion] Skipping duplicate trend: "${item.topic}" (${item.source})`,
+      );
+    }
+    return !isDuplicate;
+  });
+
+  if (fresh.length > 0) {
+    await insertRawTrends(fresh);
   }
 
   console.log(
-    `[Ingestion] ${deduped.length} items ingested (${items.length - deduped.length} duplicates removed)`,
+    `[Ingestion] ${fresh.length} items ingested (${items.length - fresh.length} duplicates removed)`,
   );
-  return deduped;
+  return fresh;
 }
 
 // ─── Tag Extraction ───────────────────────────────────────────────────────────
@@ -651,12 +710,12 @@ export async function scoreAndRoute(
       network_event: assigned.length >= 2,
     };
 
-    await insertScoredTrend({
+    const inserted = await insertScoredTrend({
       ...scored_item,
       urgency_rank: urgencyRank,
       processed: false,
     });
-    scored.push(scored_item);
+    if (inserted) scored.push(scored_item);
   }
 
   console.log(

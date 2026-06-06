@@ -53,6 +53,53 @@ import type {
   NetworkActivity,
 } from "@/lib/pipeline/types";
 
+function normalizeTrendIdentity(value: string | null | undefined): string {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function scoredTrendIdentityKeys(
+  item: Pick<ScoredTrendItem, "source" | "url" | "topic" | "headline">,
+): string[] {
+  const keys = new Set<string>();
+  const source = normalizeTrendIdentity(item.source);
+  const url = normalizeTrendIdentity(item.url);
+  const topic = normalizeTrendIdentity(item.topic);
+  const headline = normalizeTrendIdentity(item.headline);
+
+  if (url) keys.add(`${source}:url:${url}`);
+  if (topic) keys.add(`${source}:topic:${topic}`);
+  if (headline) keys.add(`${source}:headline:${headline}`);
+  if (topic) keys.add(`any:topic:${topic}`);
+
+  return [...keys];
+}
+
+async function dedupeScoredItemsForProcessing(
+  items: ScoredTrendItem[],
+): Promise<ScoredTrendItem[]> {
+  const seen = new Set<string>();
+  const unique: ScoredTrendItem[] = [];
+
+  for (const item of items) {
+    const keys = scoredTrendIdentityKeys(item);
+    if (keys.some((key) => seen.has(key))) {
+      console.log(
+        `[Pipeline] Skipping duplicate scored trend before review generation: "${item.topic}"`,
+      );
+      await markTrendProcessed(item.id);
+      continue;
+    }
+
+    for (const key of keys) seen.add(key);
+    unique.push(item);
+  }
+
+  return unique;
+}
+
 // ─── Stage 3→5: Process a single trend item for one persona ──────────────────
 
 async function processTrendForPersona(
@@ -225,12 +272,13 @@ export async function runTrendPipeline(): Promise<void> {
 
     // Retrieve any previously scored but unprocessed items too
     const unprocessed = await getUnprocessedTrends(config.max_trends_per_run);
-    const allItems = [
+    const allItems = await dedupeScoredItemsForProcessing([
       ...scoredItems,
       ...unprocessed.filter((u) => !scoredItems.some((s) => s.id === u.id)),
-    ].slice(0, config.max_trends_per_run);
+    ]);
+    const runnableItems = allItems.slice(0, config.max_trends_per_run);
 
-    if (allItems.length === 0) {
+    if (runnableItems.length === 0) {
       console.log("[Pipeline] No relevant trend items found this run.");
       await completePipelineRun(
         runId,
@@ -256,7 +304,7 @@ export async function runTrendPipeline(): Promise<void> {
     }));
 
     // Process each trend item
-    for (const item of allItems) {
+    for (const item of runnableItems) {
       console.log(
         `\n[Pipeline] Processing: "${item.topic}" → assigned: [${item.assigned_personas.join(", ")}]`,
       );
