@@ -39,7 +39,10 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 const templateCache = new Map<PersonaId, string>();
 const embedCache = new Map<string, number[]>();
-const bundleCache = new Map<string, { bundle: MemoryBundle; expiresAt: number }>();
+const bundleCache = new Map<
+  string,
+  { bundle: MemoryBundle; expiresAt: number }
+>();
 
 function loadTemplate(personaId: PersonaId): string {
   if (templateCache.has(personaId)) return templateCache.get(personaId)!;
@@ -116,7 +119,7 @@ async function buildPositionSummary(
   return (
     `Topic addressed ${summaryPosts.length} time(s). Last: ${last}. ` +
     `Avg engagement: ${avg.toFixed(2)}. ` +
-    `Most recent stance: "${excerpt}${summaryPosts[0].content.length > 120 ? "..." : ""}"
+    `Most recent stance: "${excerpt}${summaryPosts[0].content.length > 120 ? "..." : ""}"`
   );
 }
 
@@ -269,13 +272,14 @@ export async function assembleMemoryBundle(
   // All DB fetches in parallel for minimum latency
   const queryEmbedding = await embedText(topic);
 
-  const [episodic, relationalAll, beliefs, positionSummary] =
-    await Promise.all([
+  const [episodic, relationalAll, beliefs, positionSummary] = await Promise.all(
+    [
       searchEpisodicMemory(personaId, queryEmbedding, 3, 0.72),
       getRelationalStates(personaId),
       getBeliefEvolution(personaId, topicKey),
       buildPositionSummary(personaId, topicKey),
-    ]);
+    ],
+  );
 
   const bundle: MemoryBundle = {
     personaId,
@@ -286,7 +290,7 @@ export async function assembleMemoryBundle(
     beliefEvolution: beliefs,
     assembledAt: new Date().toISOString(),
   };
-  
+
   const relByPersona: Record<PersonaId, RelationalState | null> = {
     nova: null,
     cynic: null,
