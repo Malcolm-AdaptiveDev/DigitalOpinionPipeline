@@ -38,6 +38,8 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 // ─── Template Cache ───────────────────────────────────────────────────────────
 
 const templateCache = new Map<PersonaId, string>();
+const embedCache = new Map<string, number[]>();
+const bundleCache = new Map<string, { bundle: MemoryBundle; expiresAt: number }>();
 
 function loadTemplate(personaId: PersonaId): string {
   if (templateCache.has(personaId)) return templateCache.get(personaId)!;
@@ -55,11 +57,16 @@ function loadTemplate(personaId: PersonaId): string {
 // ─── Embedding ────────────────────────────────────────────────────────────────
 
 export async function embedText(text: string): Promise<number[]> {
+  const key = text.slice(0, 2000);
+  if (embedCache.has(key)) return embedCache.get(key)!;
+
   const res = await openai.embeddings.create({
     model: "text-embedding-3-small",
     input: text.slice(0, 8000), // Respect token limit
   });
-  return res.data[0].embedding;
+  const embedding = res.data[0].embedding;
+  embedCache.set(key, embedding);
+  return embedding;
 }
 
 // ─── Layer 2 Formatter ────────────────────────────────────────────────────────
@@ -73,12 +80,14 @@ function formatEpisodicBlock(
   }
 
   const lines = memories
+    .slice(0, 3)
     .map((m, i) => {
       const date = new Date(m.created_at).toDateString();
+      const snippet = m.content.replace(/\s+/g, " ").slice(0, 240);
       return (
         `[Post #${i + 1} — ${m.platform.toUpperCase()} — ${date}]\n` +
-        `"${m.content}"\n` +
-        `Topic tags: ${m.topic_tags.join(", ")}\n` +
+        `"${snippet}${m.content.length > 240 ? "..." : ""}"\n` +
+        `Topic tags: ${m.topic_tags.slice(0, 4).join(", ")}\n` +
         `Engagement: ${m.engagement_score?.toFixed(2) ?? "unrecorded"}` +
         (m.cross_refs?.length
           ? ` | Cross-persona refs: ${m.cross_refs.length}`
@@ -94,18 +103,20 @@ async function buildPositionSummary(
   personaId: PersonaId,
   topicTag: string,
 ): Promise<string> {
-  const posts = await getRecentPostsOnTopic(personaId, topicTag, 20);
+  const posts = await getRecentPostsOnTopic(personaId, topicTag, 5);
   if (posts.length === 0) return "No prior posts on this topic found.";
 
+  const summaryPosts = posts.slice(0, 3);
   const avg =
-    posts.reduce((s, p) => s + (p.engagement_score ?? 0), 0) / posts.length;
-  const last = new Date(posts[0].created_at).toDateString();
-  const excerpt = posts[0].content.slice(0, 150);
+    summaryPosts.reduce((s, p) => s + (p.engagement_score ?? 0), 0) /
+    summaryPosts.length;
+  const last = new Date(summaryPosts[0].created_at).toDateString();
+  const excerpt = summaryPosts[0].content.slice(0, 120);
 
   return (
-    `Topic addressed ${posts.length} time(s). Last: ${last}. ` +
+    `Topic addressed ${summaryPosts.length} time(s). Last: ${last}. ` +
     `Avg engagement: ${avg.toFixed(2)}. ` +
-    `Most recent stance: "${excerpt}${posts[0].content.length > 150 ? "..." : ""}"`
+    `Most recent stance: "${excerpt}${summaryPosts[0].content.length > 120 ? "..." : ""}"
   );
 }
 
@@ -157,9 +168,9 @@ export function buildWorldContext(
     url: item.url,
     published_at: item.published_at,
     hours_ago: hoursAgo,
-    summary: item.raw_content.slice(0, 400),
+    summary: item.raw_content.replace(/\s+/g, " ").slice(0, 220),
     relevance: `Relevance score for ${personaId}: ${item.relevance_scores[personaId].toFixed(2)}`,
-    related_signals: item.tags,
+    related_signals: item.tags.slice(0, 5),
     suggested_pillar: pillar,
     suggested_platform: platform,
     urgency: item.urgency,
@@ -239,26 +250,6 @@ function formatBeliefBlock(evolutions: BeliefEvolution[]): string {
     .join("\n\n");
 }
 
-// ─── Network Activity Builder ─────────────────────────────────────────────────
-
-async function buildNetworkActivity(
-  excludePersona: PersonaId,
-): Promise<NetworkActivity[]> {
-  const recentPosts = await getRecentNetworkPosts(excludePersona, 48);
-
-  return recentPosts.map((post) => ({
-    persona: post.persona_id as PersonaId,
-    platform: post.platform as Platform,
-    hours_ago: Math.round(
-      (Date.now() - new Date(post.created_at).getTime()) / 3600000,
-    ),
-    excerpt:
-      post.content.slice(0, 120) + (post.content.length > 120 ? "..." : ""),
-    topic_tag: post.topic_tags?.[0] ?? "general",
-    post_id: post.id,
-  }));
-}
-
 // ─── Main: Assemble Full Memory Bundle ───────────────────────────────────────
 
 export async function assembleMemoryBundle(
@@ -269,20 +260,33 @@ export async function assembleMemoryBundle(
     .toLowerCase()
     .replace(/\s+/g, "_")
     .replace(/[^a-z0-9_]/g, "");
+  const cacheKey = `${personaId}:${topicKey}`;
+  const cached = bundleCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.bundle;
+  }
 
   // All DB fetches in parallel for minimum latency
   const queryEmbedding = await embedText(topic);
 
-  const [episodic, relationalAll, beliefs, networkPosts, positionSummary] =
+  const [episodic, relationalAll, beliefs, positionSummary] =
     await Promise.all([
-      searchEpisodicMemory(personaId, queryEmbedding, 5, 0.65),
+      searchEpisodicMemory(personaId, queryEmbedding, 3, 0.72),
       getRelationalStates(personaId),
       getBeliefEvolution(personaId, topicKey),
-      buildNetworkActivity(personaId),
       buildPositionSummary(personaId, topicKey),
     ]);
 
-  // Index relational states by target persona
+  const bundle: MemoryBundle = {
+    personaId,
+    topic,
+    episodic,
+    positionSummary,
+    relational: {} as Record<PersonaId, RelationalState | null>,
+    beliefEvolution: beliefs,
+    assembledAt: new Date().toISOString(),
+  };
+  
   const relByPersona: Record<PersonaId, RelationalState | null> = {
     nova: null,
     cynic: null,
@@ -293,16 +297,10 @@ export async function assembleMemoryBundle(
   for (const state of relationalAll) {
     relByPersona[state.persona_to as PersonaId] = state;
   }
+  bundle.relational = relByPersona;
+  bundleCache.set(cacheKey, { bundle, expiresAt: Date.now() + 5 * 60 * 1000 });
 
-  return {
-    personaId,
-    topic,
-    episodic,
-    positionSummary,
-    relational: relByPersona,
-    beliefEvolution: beliefs,
-    assembledAt: new Date().toISOString(),
-  };
+  return bundle;
 }
 
 // ─── Template Injection ───────────────────────────────────────────────────────

@@ -217,7 +217,7 @@ export async function getBeliefEvolution(
     .eq("persona_id", personaId)
     .or(`topic.eq.${topicKey},topic.ilike.%${topicKey}%`)
     .order("created_at", { ascending: false })
-    .limit(5);
+    .limit(3);
   if (error) throw new Error(`getBeliefEvolution: ${error.message}`);
   return data ?? [];
 }
@@ -245,7 +245,8 @@ export async function insertRawTrends(items: RawTrendItem[]): Promise<void> {
 export async function insertScoredTrend(
   item: ScoredTrendItem & { urgency_rank?: number; processed?: boolean },
 ): Promise<void> {
-  const { error } = await db().from("scored_trends").insert(item);
+  const row = { processed: false, ...item };
+  const { error } = await db().from("scored_trends").insert(row);
   if (error) throw new Error(`insertScoredTrend: ${error.message}`);
 }
 

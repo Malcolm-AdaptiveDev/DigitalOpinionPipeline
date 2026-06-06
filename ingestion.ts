@@ -23,6 +23,19 @@ import type {
 import { insertRawTrends, insertScoredTrend } from "@/lib/pipeline/db";
 
 const rssParser = new Parser({ timeout: 8000 });
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  errorMessage: string,
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(errorMessage)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() =>
+    clearTimeout(timeoutId),
+  ) as Promise<T>;
+}
 
 // ─── Source Configuration ─────────────────────────────────────────────────────
 
@@ -383,7 +396,11 @@ export async function ingestTrends(): Promise<RawTrendItem[]> {
   await Promise.allSettled(
     RSS_SOURCES.map(async ({ url, source, tags }) => {
       try {
-        const feed = await rssParser.parseURL(url);
+        const feed = await withTimeout(
+          rssParser.parseURL(url),
+          10000,
+          `RSS source timed out after 10s: ${source} (${url})`,
+        );
         const fresh = (feed.items ?? [])
           .filter((item) => {
             if (!item.pubDate) return true;
