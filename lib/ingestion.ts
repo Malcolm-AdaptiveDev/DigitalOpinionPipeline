@@ -21,6 +21,7 @@ import type {
   Platform,
 } from "@/lib/pipeline/types";
 import {
+  getEpisodicMemoryCountsForTags,
   getExistingTrendIdentityKeys,
   insertRawTrends,
   insertScoredTrend,
@@ -77,7 +78,7 @@ function trendStableId(
 }
 // ─── Source Configuration ─────────────────────────────────────────────────────
 
-const RSS_SOURCES: Array<{ url: string; source: TrendSource; tags: string[] }> =
+export const RSS_SOURCES: Array<{ url: string; source: TrendSource; tags: string[] }> =
   [
     {
       url: "https://techcrunch.com/feed/",
@@ -427,7 +428,7 @@ const PILLAR_MAP: Record<
 
 // ─── Stage 1: Ingestion ───────────────────────────────────────────────────────
 
-export async function ingestTrends(): Promise<RawTrendItem[]> {
+export async function fetchLatestTrendCandidates(): Promise<RawTrendItem[]> {
   const items: RawTrendItem[] = [];
   const errors: string[] = [];
 
@@ -495,6 +496,12 @@ export async function ingestTrends(): Promise<RawTrendItem[]> {
     return true;
   });
 
+  return deduped;
+}
+
+export async function ingestTrends(): Promise<RawTrendItem[]> {
+  const deduped = await fetchLatestTrendCandidates();
+
   const existingKeys = await getExistingTrendIdentityKeys(deduped);
   const fresh = deduped.filter((item) => {
     const isDuplicate = trendIdentityKeys(item).some((key) =>
@@ -513,7 +520,7 @@ export async function ingestTrends(): Promise<RawTrendItem[]> {
   }
 
   console.log(
-    `[Ingestion] ${fresh.length} items ingested (${items.length - fresh.length} duplicates removed)`,
+    `[Ingestion] ${fresh.length} items ingested (${deduped.length - fresh.length} duplicates removed)`,
   );
   return fresh;
 }
@@ -666,10 +673,16 @@ function suggestPillarAndPlatform(
   return defaults[personaId];
 }
 
-export async function scoreAndRoute(
+function clampScore(value: number): number {
+  return Math.max(0, Math.min(1, Number(value.toFixed(4))));
+}
+
+export async function rankTrendCandidates(
   items: RawTrendItem[],
   relevanceThreshold = 0.35,
 ): Promise<ScoredTrendItem[]> {
+  const allTags = [...new Set(items.flatMap((item) => item.tags))];
+  const memoryCounts = await getEpisodicMemoryCountsForTags(allTags);
   const scored: ScoredTrendItem[] = [];
 
   for (const item of items) {
@@ -696,19 +709,54 @@ export async function scoreAndRoute(
       .sort(([, a], [, b]) => b - a)
       .map(([id]) => id);
 
-    // Only process items that are relevant to at least one persona
     if (assigned.length === 0) continue;
 
+    const tagMemoryCounts = Object.fromEntries(
+      item.tags.map((tag) => [tag, memoryCounts[tag] ?? 0]),
+    );
+    const memoryTotal = Object.values(tagMemoryCounts).reduce(
+      (sum, count) => sum + count,
+      0,
+    );
+    const memoryScore = clampScore(memoryTotal / 10);
+    const maxRelevance = Math.max(...Object.values(scores));
     const urgency = calcUrgency(item);
-    const urgencyRank = urgency === "high" ? 1 : urgency === "medium" ? 2 : 3;
+    const urgencyBoost = urgency === "high" ? 0.08 : urgency === "medium" ? 0.04 : 0;
+    const weightedScore = clampScore(
+      maxRelevance * 0.7 + memoryScore * 0.22 + (assigned.length >= 2 ? 0.08 : 0) + urgencyBoost,
+    );
 
-    const scored_item: ScoredTrendItem = {
+    scored.push({
       ...item,
       relevance_scores: scores,
       urgency,
       assigned_personas: assigned,
       network_event: assigned.length >= 2,
-    };
+      tag_memory_counts: tagMemoryCounts,
+      memory_score: memoryScore,
+      weighted_score: weightedScore,
+      approval_status: "auto_approved",
+      approved_at: new Date().toISOString(),
+    });
+  }
+
+  return scored.sort(
+    (a, b) =>
+      (b.weighted_score ?? 0) - (a.weighted_score ?? 0) ||
+      new Date(b.published_at).getTime() - new Date(a.published_at).getTime(),
+  );
+}
+
+export async function scoreAndRoute(
+  items: RawTrendItem[],
+  relevanceThreshold = 0.35,
+): Promise<ScoredTrendItem[]> {
+  const ranked = await rankTrendCandidates(items, relevanceThreshold);
+  const scored: ScoredTrendItem[] = [];
+
+  for (const scored_item of ranked) {
+    const urgency = scored_item.urgency;
+    const urgencyRank = urgency === "high" ? 1 : urgency === "medium" ? 2 : 3;
 
     const inserted = await insertScoredTrend({
       ...scored_item,

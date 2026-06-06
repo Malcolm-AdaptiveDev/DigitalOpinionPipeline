@@ -1,12 +1,15 @@
 import Link      from 'next/link'
 import type { ReactNode } from 'react'
+import { DbStatusIndicator } from '@/components/db-status-indicator'
 
 export function PipelineShell({
   children,
   active,
+  mockMode = false,
 }: {
   children:  ReactNode
-  active:    'dashboard' | 'review' | 'budget'
+  active:    'dashboard' | 'review' | 'budget' | 'trends'
+  mockMode?: boolean
 }) {
   return (
     <div style={{ maxWidth: 1120, margin: '0 auto', padding: '2rem 1.5rem' }}>
@@ -26,12 +29,16 @@ export function PipelineShell({
             <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#1D9E75' }} />
             System operational
           </p>
+          <div style={{ marginTop: 5 }}>
+            <DbStatusIndicator mockMode={mockMode} />
+          </div>
         </div>
 
         <nav style={{ display: 'flex', gap: 6 }}>
           {([
             { href: '/',          label: 'Dashboard', key: 'dashboard' },
-            { href: '/dashboard', label: 'Review queue', key: 'review' },
+            { href: '/latest_trends', label: 'Latest trends', key: 'trends' },
+            { href: '/review_queue', label: 'Review queue', key: 'review' },
             { href: '/dashboard?tab=budget', label: 'Calculator', key: 'budget' },
           ] as const).map(item => (
             <Link

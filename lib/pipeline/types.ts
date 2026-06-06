@@ -51,6 +51,11 @@ export interface ScoredTrendItem extends RawTrendItem {
   urgency: TrendUrgency;
   assigned_personas: PersonaId[]; // Those above threshold
   network_event: boolean; // True if 2+ personas assigned
+  tag_memory_counts?: Record<string, number>;
+  memory_score?: number;
+  weighted_score?: number;
+  approval_status?: "auto_approved" | "approved" | "rejected" | "pending";
+  approved_at?: string;
 }
 
 // ─── Memory Layers ────────────────────────────────────────────────────────────

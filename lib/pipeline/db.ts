@@ -130,6 +130,29 @@ export async function writeEpisodicMemory(
   return data.id;
 }
 
+export async function getEpisodicMemoryCountsForTags(
+  tags: string[],
+): Promise<Record<string, number>> {
+  const uniqueTags = [...new Set(tags.filter(Boolean))];
+  if (uniqueTags.length === 0) return {};
+
+  const { data, error } = await db()
+    .from("episodic_memory")
+    .select("topic_tags")
+    .overlaps("topic_tags", uniqueTags)
+    .limit(1000);
+  if (error) throw new Error(`getEpisodicMemoryCountsForTags: ${error.message}`);
+
+  const counts: Record<string, number> = {};
+  for (const row of data ?? []) {
+    const rowTags = (row as { topic_tags?: string[] }).topic_tags ?? [];
+    for (const tag of rowTags) {
+      if (uniqueTags.includes(tag)) counts[tag] = (counts[tag] ?? 0) + 1;
+    }
+  }
+  return counts;
+}
+
 // ─── Relational State ─────────────────────────────────────────────────────────
 
 export async function getRelationalStates(
@@ -350,6 +373,20 @@ export async function getUnprocessedTrends(
     .order("urgency_rank", { ascending: true })
     .limit(limit);
   if (error) throw new Error(`getUnprocessedTrends: ${error.message}`);
+  return data ?? [];
+}
+
+export async function getLatestScoredTrends(
+  limit = 8,
+): Promise<ScoredTrendItem[]> {
+  const { data, error } = await db()
+    .from("scored_trends")
+    .select("*")
+    .order("weighted_score", { ascending: false, nullsFirst: false })
+    .order("urgency_rank", { ascending: true })
+    .order("published_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`getLatestScoredTrends: ${error.message}`);
   return data ?? [];
 }
 

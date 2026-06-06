@@ -1,4 +1,4 @@
-import type { GenerationRequest, GenerationResult, ReviewStatus } from '@/lib/pipeline/types'
+import type { GenerationRequest, GenerationResult, ReviewStatus, ScoredTrendItem } from '@/lib/pipeline/types'
 import { DEFAULT_PIPELINE_CONFIG, type PipelineConfig, type PipelineConfigLog } from '@/lib/pipeline/config-shared'
 
 export type MockReviewRow = {
@@ -39,10 +39,11 @@ type MockStore = {
   }
   pipelineConfig: PipelineConfig
   pipelineConfigLog: PipelineConfigLog[]
+  latestTrends: ScoredTrendItem[]
 }
 
 const now = Date.now()
-const MOCK_STORE_VERSION = 2
+const MOCK_STORE_VERSION = 3
 
 function iso(minutesAgo: number): string {
   return new Date(now - minutesAgo * 60_000).toISOString()
@@ -101,6 +102,42 @@ function generation(
     warnings,
     generatedAt: iso(45),
     modelVersion: 'mock-local',
+  }
+}
+
+function trend(
+  id: string,
+  topic: string,
+  tags: string[],
+  weightedScore: number,
+  memoryCounts: Record<string, number>,
+  minutesAgo: number,
+): ScoredTrendItem {
+  return {
+    id,
+    source: id.includes('hn') ? 'hackernews' : 'rss_news',
+    topic,
+    headline: topic,
+    url: `https://example.test/trends/${id}`,
+    published_at: iso(minutesAgo),
+    raw_content: `Mock latest trend for ${topic}.`,
+    tags,
+    fetched_at: iso(2),
+    relevance_scores: {
+      nova: weightedScore,
+      cynic: Math.max(0.2, weightedScore - 0.2),
+      oracle: Math.max(0.2, weightedScore - 0.1),
+      rebel: Math.max(0.2, weightedScore - 0.25),
+      sage: Math.max(0.2, weightedScore - 0.3),
+    },
+    urgency: minutesAgo < 60 ? 'high' : minutesAgo < 240 ? 'medium' : 'low',
+    assigned_personas: weightedScore > 0.72 ? ['nova', 'oracle'] : ['oracle'],
+    network_event: weightedScore > 0.72,
+    tag_memory_counts: memoryCounts,
+    memory_score: Math.min(1, Object.values(memoryCounts).reduce((sum, count) => sum + count, 0) / 10),
+    weighted_score: weightedScore,
+    approval_status: 'auto_approved',
+    approved_at: iso(1),
   }
 }
 
@@ -227,6 +264,12 @@ function createSeedStore(): MockStore {
         changed_at: iso(15),
       },
     ],
+    latestTrends: [
+      trend('mock-trend-open-models', 'Open model releases shift toward inspectable AI infrastructure', ['ai', 'open_models', 'ai_infra'], 0.91, { ai: 2, open_models: 1, ai_infra: 1 }, 22),
+      trend('mock-trend-semiconductor-policy', 'New semiconductor export rules reshape advanced packaging demand', ['semiconductors', 'policy', 'supply_chain'], 0.84, { semiconductors: 1, policy: 1, supply_chain: 0 }, 75),
+      trend('mock-hn-agent-tools', 'Developers push agent tools toward local-first workflows', ['tech', 'programming', 'ai'], 0.77, { tech: 0, programming: 0, ai: 2 }, 130),
+      trend('mock-trend-creator-platforms', 'Creator platforms test new monetization rules as fatigue rises', ['creator_economy', 'platform_fatigue', 'media'], 0.69, { creator_economy: 1, platform_fatigue: 0, media: 0 }, 230),
+    ],
   }
 }
 
@@ -331,6 +374,27 @@ export function updateMockPipelineConfig(
 
   store().pipelineConfig = next
   return getMockPipelineConfig()
+}
+
+export function getMockLatestTrends(limit = 12): ScoredTrendItem[] {
+  return store()
+    .latestTrends
+    .slice()
+    .sort((a, b) => (b.weighted_score ?? 0) - (a.weighted_score ?? 0))
+    .slice(0, limit)
+}
+
+export function approveMockLatestTrends(ids?: string[]) {
+  const selected = ids?.length
+    ? store().latestTrends.filter(item => ids.includes(item.id))
+    : store().latestTrends
+
+  for (const item of selected) {
+    item.approval_status = 'approved'
+    item.approved_at = new Date().toISOString()
+  }
+
+  return selected
 }
 
 export function handleMockReviewAction(body: {
