@@ -13,6 +13,7 @@ import {
   trendPipelineFunction,
   scheduledPostsFunction,
   approvedPostWebhook,
+  rssFeedHealthCheckFunction,
 } from "@/lib/pipeline/pipeline";
 
 export const { GET, POST, PUT } = serve({
@@ -21,6 +22,7 @@ export const { GET, POST, PUT } = serve({
     trendPipelineFunction,
     scheduledPostsFunction,
     approvedPostWebhook,
+    rssFeedHealthCheckFunction,
   ],
   baseUrl: process.env.INNGEST_BASE_URL,
 });

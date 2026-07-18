@@ -18,6 +18,8 @@ import type {
   ScoredTrendItem,
   PipelineRun,
   ReviewStatus,
+  RssFeed,
+  RssFeedHealthStatus,
 } from "@/lib/pipeline/types";
 
 // ─── Singleton ────────────────────────────────────────────────────────────────
@@ -141,7 +143,8 @@ export async function getEpisodicMemoryCountsForTags(
     .select("topic_tags")
     .overlaps("topic_tags", uniqueTags)
     .limit(1000);
-  if (error) throw new Error(`getEpisodicMemoryCountsForTags: ${error.message}`);
+  if (error)
+    throw new Error(`getEpisodicMemoryCountsForTags: ${error.message}`);
 
   const counts: Record<string, number> = {};
   for (const row of data ?? []) {
@@ -269,10 +272,7 @@ export async function insertRawTrends(items: RawTrendItem[]): Promise<void> {
 }
 
 function normalizeTrendIdentity(value: string | null | undefined): string {
-  return (value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
+  return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function trendIdentityKeys(
@@ -311,7 +311,12 @@ export async function getExistingTrendIdentityKeys(
 
   const queries = tables.flatMap((table) => [
     ...(urls.length > 0
-      ? [db().from(table).select("source, url, topic, headline").in("url", urls)]
+      ? [
+          db()
+            .from(table)
+            .select("source, url, topic, headline")
+            .in("url", urls),
+        ]
       : []),
     ...(topics.length > 0
       ? [
@@ -335,7 +340,9 @@ export async function getExistingTrendIdentityKeys(
   const keys = new Set<string>();
   for (const response of responses) {
     if (response.error) {
-      throw new Error(`getExistingTrendIdentityKeys: ${response.error.message}`);
+      throw new Error(
+        `getExistingTrendIdentityKeys: ${response.error.message}`,
+      );
     }
     for (const row of response.data ?? []) {
       for (const key of trendIdentityKeys(row as RawTrendItem)) keys.add(key);
@@ -347,7 +354,10 @@ export async function getExistingTrendIdentityKeys(
 export async function insertScoredTrend(
   item: ScoredTrendItem & { urgency_rank?: number; processed?: boolean },
 ): Promise<boolean> {
-  const existing = await getExistingTrendIdentityKeys([item], ["scored_trends"]);
+  const existing = await getExistingTrendIdentityKeys(
+    [item],
+    ["scored_trends"],
+  );
   if (trendIdentityKeys(item).some((key) => existing.has(key))) {
     console.log(
       `[Scoring] Skipping duplicate scored trend: "${item.topic}" (${item.source})`,
@@ -413,10 +423,7 @@ export async function insertReviewItem(
 }
 
 function normalizeReviewTopic(value: string | null | undefined): string {
-  return (value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
+  return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 export async function getQueuedPersonasForTrend(
@@ -476,10 +483,7 @@ export async function updateReviewStatus(
   };
   if (opts?.request) patch.request = opts.request;
 
-  const { error } = await db()
-    .from("review_queue")
-    .update(patch)
-    .eq("id", id);
+  const { error } = await db().from("review_queue").update(patch).eq("id", id);
   if (error) throw new Error(`updateReviewStatus: ${error.message}`);
 }
 
@@ -530,3 +534,80 @@ export async function completePipelineRun(
     .eq("run_id", runId);
   if (error) throw new Error(`completePipelineRun: ${error.message}`);
 }
+
+// ─── RSS Feeds ────────────────────────────────────────────────────────────────
+
+export async function listRssFeeds(activeOnly = false): Promise<RssFeed[]> {
+  let query = db().from("rss_feeds").select("*").order("name", { ascending: true });
+  if (activeOnly) query = query.eq("is_active", true);
+  const { data, error } = await query;
+  if (error) throw new Error(`listRssFeeds: ${error.message}`);
+  return data ?? [];
+}
+
+export async function getRssFeed(id: string): Promise<RssFeed | null> {
+  const { data, error } = await db()
+    .from("rss_feeds")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw new Error(`getRssFeed: ${error.message}`);
+  return data;
+}
+
+export async function insertRssFeed(
+  feed: Omit<RssFeed, "id" | "created_at" | "updated_at" | "last_checked_at" | "last_health_status" | "last_health_error" | "consecutive_failures" | "auto_disabled">,
+): Promise<RssFeed> {
+  const { data, error } = await db()
+    .from("rss_feeds")
+    .insert({ ...feed, updated_at: new Date().toISOString() })
+    .select("*")
+    .single();
+  if (error) throw new Error(`insertRssFeed: ${error.message}`);
+  return data;
+}
+
+export async function updateRssFeed(
+  id: string,
+  patch: Partial<Pick<RssFeed, "url" | "name" | "source" | "tags" | "is_active" | "notes">>,
+): Promise<RssFeed> {
+  const { data, error } = await db()
+    .from("rss_feeds")
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error) throw new Error(`updateRssFeed: ${error.message}`);
+  return data;
+}
+
+export async function deleteRssFeed(id: string): Promise<void> {
+  const { error } = await db().from("rss_feeds").delete().eq("id", id);
+  if (error) throw new Error(`deleteRssFeed: ${error.message}`);
+}
+
+export async function updateFeedHealth(
+  id: string,
+  status: RssFeedHealthStatus,
+  opts?: {
+    error?: string;
+    consecutiveFailures?: number;
+    autoDisable?: boolean;
+    itemCount?: number;
+  },
+): Promise<void> {
+  const patch: Record<string, unknown> = {
+    last_health_status: status,
+    last_checked_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  if (opts?.error !== undefined) patch.last_health_error = opts.error;
+  if (opts?.consecutiveFailures !== undefined) patch.consecutive_failures = opts.consecutiveFailures;
+  if (opts?.autoDisable !== undefined) {
+    patch.auto_disabled = opts.autoDisable;
+    if (opts.autoDisable) patch.is_active = false;
+  }
+  const { error } = await db().from("rss_feeds").update(patch).eq("id", id);
+  if (error) throw new Error(`updateFeedHealth: ${error.message}`);
+}
+
