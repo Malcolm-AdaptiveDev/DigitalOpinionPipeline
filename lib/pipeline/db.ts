@@ -141,7 +141,8 @@ export async function getEpisodicMemoryCountsForTags(
     .select("topic_tags")
     .overlaps("topic_tags", uniqueTags)
     .limit(1000);
-  if (error) throw new Error(`getEpisodicMemoryCountsForTags: ${error.message}`);
+  if (error)
+    throw new Error(`getEpisodicMemoryCountsForTags: ${error.message}`);
 
   const counts: Record<string, number> = {};
   for (const row of data ?? []) {
@@ -269,10 +270,7 @@ export async function insertRawTrends(items: RawTrendItem[]): Promise<void> {
 }
 
 function normalizeTrendIdentity(value: string | null | undefined): string {
-  return (value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
+  return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function trendIdentityKeys(
@@ -311,7 +309,12 @@ export async function getExistingTrendIdentityKeys(
 
   const queries = tables.flatMap((table) => [
     ...(urls.length > 0
-      ? [db().from(table).select("source, url, topic, headline").in("url", urls)]
+      ? [
+          db()
+            .from(table)
+            .select("source, url, topic, headline")
+            .in("url", urls),
+        ]
       : []),
     ...(topics.length > 0
       ? [
@@ -335,7 +338,9 @@ export async function getExistingTrendIdentityKeys(
   const keys = new Set<string>();
   for (const response of responses) {
     if (response.error) {
-      throw new Error(`getExistingTrendIdentityKeys: ${response.error.message}`);
+      throw new Error(
+        `getExistingTrendIdentityKeys: ${response.error.message}`,
+      );
     }
     for (const row of response.data ?? []) {
       for (const key of trendIdentityKeys(row as RawTrendItem)) keys.add(key);
@@ -347,7 +352,10 @@ export async function getExistingTrendIdentityKeys(
 export async function insertScoredTrend(
   item: ScoredTrendItem & { urgency_rank?: number; processed?: boolean },
 ): Promise<boolean> {
-  const existing = await getExistingTrendIdentityKeys([item], ["scored_trends"]);
+  const existing = await getExistingTrendIdentityKeys(
+    [item],
+    ["scored_trends"],
+  );
   if (trendIdentityKeys(item).some((key) => existing.has(key))) {
     console.log(
       `[Scoring] Skipping duplicate scored trend: "${item.topic}" (${item.source})`,
@@ -413,10 +421,7 @@ export async function insertReviewItem(
 }
 
 function normalizeReviewTopic(value: string | null | undefined): string {
-  return (value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
+  return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 export async function getQueuedPersonasForTrend(
@@ -476,11 +481,63 @@ export async function updateReviewStatus(
   };
   if (opts?.request) patch.request = opts.request;
 
-  const { error } = await db()
-    .from("review_queue")
-    .update(patch)
-    .eq("id", id);
+  const { error } = await db().from("review_queue").update(patch).eq("id", id);
   if (error) throw new Error(`updateReviewStatus: ${error.message}`);
+}
+
+// ─── Admin: Queue Clearing ────────────────────────────────────────────────────
+
+export async function clearPendingReviews(): Promise<number> {
+  const now = new Date().toISOString();
+  const { data, error } = await db()
+    .from("review_queue")
+    .update({ status: "unapproved", reviewed_at: now })
+    .eq("status", "pending")
+    .select("id");
+  if (error) throw new Error(`clearPendingReviews: ${error.message}`);
+  return data?.length ?? 0;
+}
+
+export async function getUnprocessedTrendCount(): Promise<number> {
+  const { count, error } = await db()
+    .from("scored_trends")
+    .select("id", { count: "exact", head: true })
+    .eq("processed", false)
+    .neq("approval_status", "outdated");
+  if (error) throw new Error(`getUnprocessedTrendCount: ${error.message}`);
+  return count ?? 0;
+}
+
+export async function clearTrendingQueues(): Promise<{
+  rawTrends: number;
+  scoredTrends: number;
+}> {
+  const now = new Date().toISOString();
+  const [rawRes, scoredRes] = await Promise.all([
+    db()
+      .from("trending_queue")
+      .update({ queue_status: "outdated" })
+      .eq("queue_status", "active")
+      .select("id"),
+    db()
+      .from("scored_trends")
+      .update({
+        approval_status: "outdated",
+        processed: true,
+        processed_at: now,
+      })
+      .eq("processed", false)
+      .neq("approval_status", "outdated")
+      .select("id"),
+  ]);
+  if (rawRes.error)
+    throw new Error(`clearTrendingQueues (raw): ${rawRes.error.message}`);
+  if (scoredRes.error)
+    throw new Error(`clearTrendingQueues (scored): ${scoredRes.error.message}`);
+  return {
+    rawTrends: rawRes.data?.length ?? 0,
+    scoredTrends: scoredRes.data?.length ?? 0,
+  };
 }
 
 // ─── Published Posts ──────────────────────────────────────────────────────────

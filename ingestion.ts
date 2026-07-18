@@ -46,11 +46,12 @@ const RSS_SOURCES: Array<{ url: string; source: TrendSource; tags: string[] }> =
       source: "rss_news",
       tags: ["tech", "startups", "ai", "venture"],
     },
-    {
-      url: "https://feeds.reuters.com/reuters/technologyNews",
-      source: "rss_news",
-      tags: ["tech", "business", "global"],
-    },
+    // Feeds disabled. reuters.com wants $4/month for custom RSS feeds
+    // {
+    //   url: "https://feeds.reuters.com/reuters/technologyNews",
+    //   source: "rss_news",
+    //   tags: ["tech", "business", "global"],
+    // },
     {
       url: "https://feeds.arstechnica.com/arstechnica/index",
       source: "rss_news",
