@@ -54,7 +54,12 @@ export interface ScoredTrendItem extends RawTrendItem {
   tag_memory_counts?: Record<string, number>;
   memory_score?: number;
   weighted_score?: number;
-  approval_status?: "auto_approved" | "approved" | "rejected" | "pending";
+  approval_status?:
+    | "auto_approved"
+    | "approved"
+    | "rejected"
+    | "pending"
+    | "outdated";
   approved_at?: string;
 }
 
@@ -221,7 +226,13 @@ export interface GenerationResult {
 
 // ─── Review Queue ─────────────────────────────────────────────────────────────
 
-export type ReviewStatus = "pending" | "approved" | "edited" | "rejected";
+export type ReviewStatus =
+  | "pending"
+  | "approved"
+  | "edited"
+  | "rejected"
+  | "outdated"
+  | "unapproved";
 
 export interface ReviewQueueItem {
   id: string;
