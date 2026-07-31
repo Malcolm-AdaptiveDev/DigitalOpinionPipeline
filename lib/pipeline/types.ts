@@ -289,6 +289,37 @@ export interface RelationalEvent {
   trigger_post_ids: string[];
 }
 
+// ─── RSS Feed Management ──────────────────────────────────────────────────────
+
+export type RssFeedHealthStatus = "ok" | "error" | "timeout" | "unknown";
+
+export interface RssFeed {
+  id: string;
+  url: string;
+  name: string;
+  source: TrendSource;
+  tags: string[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  last_checked_at: string | null;
+  last_health_status: RssFeedHealthStatus;
+  last_health_error: string | null;
+  consecutive_failures: number;
+  auto_disabled: boolean;
+  notes: string | null;
+}
+
+export interface RssFeedHealthCheckResult {
+  feedId: string;
+  url: string;
+  status: RssFeedHealthStatus;
+  error?: string;
+  itemCount?: number;
+  checkedAt: string;
+  durationMs: number;
+}
+
 // ─── Pipeline Run ─────────────────────────────────────────────────────────────
 
 export interface PipelineRun {

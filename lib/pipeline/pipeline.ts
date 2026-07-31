@@ -42,6 +42,7 @@ import {
   getQueuedPersonasForTrend,
 } from "@/lib/pipeline/db";
 import { getPipelineConfig } from "@/lib/pipeline/config";
+import { runFeedHealthChecks } from "@/lib/pipeline/rss-feeds";
 import type {
   PersonaId,
   ScoredTrendItem,
@@ -55,10 +56,7 @@ import type {
 } from "@/lib/pipeline/types";
 
 function normalizeTrendIdentity(value: string | null | undefined): string {
-  return (value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
+  return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function scoredTrendIdentityKeys(
@@ -116,7 +114,9 @@ function selectPersonasForTrend(
     );
   const fresh = ranked.filter((persona) => !alreadyQueued.has(persona));
   const candidates =
-    fresh.length > 0 ? fresh : ranked.filter((persona) => alreadyQueued.has(persona));
+    fresh.length > 0
+      ? fresh
+      : ranked.filter((persona) => alreadyQueued.has(persona));
   return candidates.slice(0, Math.max(0, limit));
 }
 
@@ -367,7 +367,11 @@ export async function runTrendPipeline(): Promise<void> {
       }
 
       // Cross-persona cascade — detect reactions from primary results
-      if (config.cascade_enabled && primaryResults.length > 0 && cascadesGenerated < config.max_cascades_per_run) {
+      if (
+        config.cascade_enabled &&
+        primaryResults.length > 0 &&
+        cascadesGenerated < config.max_cascades_per_run
+      ) {
         const latestResult = primaryResults[primaryResults.length - 1];
         const latestRequest = {
           persona: latestResult.persona,
@@ -390,7 +394,10 @@ export async function runTrendPipeline(): Promise<void> {
           networkActivity,
         );
 
-        for (const cascade of cascades.slice(0, config.max_cascades_per_run - cascadesGenerated)) {
+        for (const cascade of cascades.slice(
+          0,
+          config.max_cascades_per_run - cascadesGenerated,
+        )) {
           // Don't generate cascade if persona was already assigned
           if (item.assigned_personas.includes(cascade.persona)) continue;
 
@@ -418,7 +425,10 @@ export async function runTrendPipeline(): Promise<void> {
             });
 
             const cascadeRequest = { ...cascade, topicTags: item.tags };
-            const cascadeResult = await generatePost(cascadeRequest, cascadeAssembled);
+            const cascadeResult = await generatePost(
+              cascadeRequest,
+              cascadeAssembled,
+            );
             await insertReviewItem({
               generation: cascadeResult,
               request: cascadeRequest,
@@ -734,5 +744,13 @@ export const approvedPostWebhook = inngest.createFunction(
         beliefShift,
       }),
     );
+  },
+);
+
+export const rssFeedHealthCheckFunction = inngest.createFunction(
+  { id: "rss-feed-health-check", name: "Daily RSS feed health check" },
+  { cron: "0 6 * * *" }, // Every day at 6 AM UTC
+  async ({ step }) => {
+    await step.run("run-feed-health-checks", () => runFeedHealthChecks());
   },
 );

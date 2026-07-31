@@ -3,6 +3,8 @@ import type {
   GenerationResult,
   ReviewStatus,
   ScoredTrendItem,
+  RssFeed,
+  RssFeedHealthCheckResult,
 } from "@/lib/pipeline/types";
 import {
   DEFAULT_PIPELINE_CONFIG,
@@ -49,10 +51,11 @@ type MockStore = {
   pipelineConfig: PipelineConfig;
   pipelineConfigLog: PipelineConfigLog[];
   latestTrends: ScoredTrendItem[];
+  rssFeeds: RssFeed[];
 };
 
 const now = Date.now();
-const MOCK_STORE_VERSION = 3;
+const MOCK_STORE_VERSION = 4;
 
 function iso(minutesAgo: number): string {
   return new Date(now - minutesAgo * 60_000).toISOString();
@@ -336,6 +339,120 @@ function createSeedStore(): MockStore {
         230,
       ),
     ],
+    rssFeeds: [
+      {
+        id: "mock-feed-techcrunch",
+        url: "https://techcrunch.com/feed/",
+        name: "TechCrunch",
+        source: "rss_news",
+        tags: ["tech", "startups", "ai", "venture"],
+        is_active: true,
+        created_at: iso(10080),
+        updated_at: iso(60),
+        last_checked_at: iso(60),
+        last_health_status: "ok",
+        last_health_error: null,
+        consecutive_failures: 0,
+        auto_disabled: false,
+        notes: null,
+      },
+      {
+        id: "mock-feed-reuters",
+        url: "https://feeds.reuters.com/reuters/technologyNews",
+        name: "Reuters Technology",
+        source: "rss_news",
+        tags: ["tech", "business", "global"],
+        is_active: true,
+        created_at: iso(10080),
+        updated_at: iso(60),
+        last_checked_at: iso(60),
+        last_health_status: "ok",
+        last_health_error: null,
+        consecutive_failures: 0,
+        auto_disabled: false,
+        notes: null,
+      },
+      {
+        id: "mock-feed-arstechnica",
+        url: "https://feeds.arstechnica.com/arstechnica/index",
+        name: "Ars Technica",
+        source: "rss_news",
+        tags: ["tech", "science", "policy"],
+        is_active: true,
+        created_at: iso(10080),
+        updated_at: iso(120),
+        last_checked_at: iso(120),
+        last_health_status: "ok",
+        last_health_error: null,
+        consecutive_failures: 0,
+        auto_disabled: false,
+        notes: null,
+      },
+      {
+        id: "mock-feed-wired",
+        url: "https://www.wired.com/feed/rss",
+        name: "Wired",
+        source: "rss_news",
+        tags: ["culture", "tech", "future"],
+        is_active: true,
+        created_at: iso(10080),
+        updated_at: iso(60),
+        last_checked_at: iso(60),
+        last_health_status: "ok",
+        last_health_error: null,
+        consecutive_failures: 0,
+        auto_disabled: false,
+        notes: null,
+      },
+      {
+        id: "mock-feed-bloomberg",
+        url: "https://feeds.bloomberg.com/technology/news.rss",
+        name: "Bloomberg Tech",
+        source: "rss_news",
+        tags: ["finance", "tech", "markets"],
+        is_active: false,
+        created_at: iso(10080),
+        updated_at: iso(30),
+        last_checked_at: iso(30),
+        last_health_status: "error",
+        last_health_error: "HTTP 403 — feed requires subscription",
+        consecutive_failures: 4,
+        auto_disabled: true,
+        notes: "Bloomberg blocks unauthenticated RSS access.",
+      },
+      {
+        id: "mock-feed-nytimes",
+        url: "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+        name: "NYT Technology",
+        source: "rss_news",
+        tags: ["tech", "society", "policy"],
+        is_active: true,
+        created_at: iso(10080),
+        updated_at: iso(60),
+        last_checked_at: iso(60),
+        last_health_status: "ok",
+        last_health_error: null,
+        consecutive_failures: 0,
+        auto_disabled: false,
+        notes: null,
+      },
+      {
+        id: "mock-feed-hn",
+        url: "https://hnrss.org/frontpage",
+        name: "Hacker News",
+        source: "hackernews",
+        tags: ["tech", "programming", "startups", "ai"],
+        is_active: true,
+        created_at: iso(10080),
+        updated_at: iso(60),
+        last_checked_at: iso(60),
+        last_health_status: "ok",
+        last_health_error: null,
+        consecutive_failures: 0,
+        auto_disabled: false,
+        notes: null,
+      },
+    ] as RssFeed[],
   };
 }
 
@@ -377,30 +494,16 @@ export function getMockReviewRows(status: string): MockReviewRow[] {
 }
 
 export function getMockReviewCounts() {
-  const counts = {
-    pending: 0,
-    approved: 0,
-    edited: 0,
-    rejected: 0,
-    outdated: 0,
-    unapproved: 0,
-  };
+  const counts = { pending: 0, approved: 0, edited: 0, rejected: 0 };
   const byPersona: Record<string, number> = {};
 
   for (const item of store().reviewQueue) {
-    const key = item.status as keyof typeof counts;
-    if (key in counts) counts[key]++;
+    counts[item.status]++;
     byPersona[item.generation.persona] =
       (byPersona[item.generation.persona] ?? 0) + 1;
   }
 
   return { counts, byPersona };
-}
-
-export function getMockTrendingCount(): number {
-  return store().latestTrends.filter(
-    (item) => item.approval_status !== "outdated",
-  ).length;
 }
 
 export function getMockMemoryTagSets(topicTags: string[]) {
@@ -537,29 +640,88 @@ export function handleMockReviewAction(body: {
   return item;
 }
 
-export function clearMockPendingReviews(): number {
-  const now = new Date().toISOString();
-  let count = 0;
-  for (const item of store().reviewQueue) {
-    if (item.status === "pending") {
-      item.status = "unapproved";
-      item.reviewed_at = now;
-      count++;
-    }
-  }
-  return count;
+// ─── Mock RSS Feed CRUD ───────────────────────────────────────────────────────
+
+export function getMockFeeds(activeOnly = false): RssFeed[] {
+  const feeds = store().rssFeeds;
+  return activeOnly ? feeds.filter((f) => f.is_active) : feeds;
 }
 
-export function clearMockTrendingQueues(): {
-  rawTrends: number;
-  scoredTrends: number;
-} {
-  let scoredTrends = 0;
-  for (const item of store().latestTrends) {
-    if (item.approval_status !== "outdated") {
-      item.approval_status = "outdated";
-      scoredTrends++;
-    }
-  }
-  return { rawTrends: 0, scoredTrends };
+export function getMockFeed(id: string): RssFeed | undefined {
+  return store().rssFeeds.find((f) => f.id === id);
+}
+
+export function addMockFeed(
+  input: Omit<
+    RssFeed,
+    | "id"
+    | "created_at"
+    | "updated_at"
+    | "last_checked_at"
+    | "last_health_status"
+    | "last_health_error"
+    | "consecutive_failures"
+    | "auto_disabled"
+  >,
+): RssFeed {
+  const now = new Date().toISOString();
+  const feed: RssFeed = {
+    ...input,
+    id: `mock-feed-${Date.now()}`,
+    created_at: now,
+    updated_at: now,
+    last_checked_at: null,
+    last_health_status: "unknown",
+    last_health_error: null,
+    consecutive_failures: 0,
+    auto_disabled: false,
+  };
+  store().rssFeeds.push(feed);
+  return feed;
+}
+
+export function updateMockFeed(
+  id: string,
+  patch: Record<string, unknown>,
+): RssFeed | null {
+  const feed = store().rssFeeds.find((f) => f.id === id);
+  if (!feed) return null;
+  Object.assign(feed, { ...patch, updated_at: new Date().toISOString() });
+  return feed;
+}
+
+export function deleteMockFeed(id: string): boolean {
+  const idx = store().rssFeeds.findIndex((f) => f.id === id);
+  if (idx === -1) return false;
+  store().rssFeeds.splice(idx, 1);
+  return true;
+}
+
+export function runMockHealthCheck(
+  feedId?: string,
+): RssFeedHealthCheckResult[] {
+  const feeds = feedId
+    ? store().rssFeeds.filter((f) => f.id === feedId)
+    : store().rssFeeds;
+
+  return feeds.map((feed) => {
+    const isOk = feed.last_health_status !== "error" && !feed.auto_disabled;
+    const result: RssFeedHealthCheckResult = {
+      feedId: feed.id,
+      url: feed.url,
+      status: isOk ? "ok" : "error",
+      error: isOk ? undefined : (feed.last_health_error ?? "Simulated failure"),
+      itemCount: isOk ? Math.floor(Math.random() * 15) + 3 : undefined,
+      checkedAt: new Date().toISOString(),
+      durationMs: Math.floor(Math.random() * 800) + 200,
+    };
+
+    // Update the store
+    feed.last_health_status = result.status;
+    feed.last_checked_at = result.checkedAt;
+    if (result.error) feed.last_health_error = result.error;
+    feed.updated_at = result.checkedAt;
+
+    return result;
+  });
 }

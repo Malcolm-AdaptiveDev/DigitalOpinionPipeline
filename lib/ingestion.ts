@@ -26,6 +26,7 @@ import {
   insertRawTrends,
   insertScoredTrend,
 } from "@/lib/pipeline/db";
+import { getActiveFeeds } from "@/lib/pipeline/rss-feeds";
 
 const rssParser = new Parser({ timeout: 8000 });
 function withTimeout<T>(
@@ -43,10 +44,7 @@ function withTimeout<T>(
 }
 
 function normalizeTrendIdentity(value: string | null | undefined): string {
-  return (value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
+  return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function trendIdentityKeys(
@@ -78,44 +76,51 @@ function trendStableId(
 }
 // ─── Source Configuration ─────────────────────────────────────────────────────
 
-export const RSS_SOURCES: Array<{ url: string; source: TrendSource; tags: string[] }> =
-  [
-    {
-      url: "https://techcrunch.com/feed/",
-      source: "rss_news",
-      tags: ["tech", "startups", "ai", "venture"],
-    },
-    {
-      url: "https://feeds.reuters.com/reuters/technologyNews",
-      source: "rss_news",
-      tags: ["tech", "business", "global"],
-    },
-    {
-      url: "https://feeds.arstechnica.com/arstechnica/index",
-      source: "rss_news",
-      tags: ["tech", "science", "policy"],
-    },
-    {
-      url: "https://www.wired.com/feed/rss",
-      source: "rss_news",
-      tags: ["culture", "tech", "future"],
-    },
-    {
-      url: "https://feeds.bloomberg.com/technology/news.rss",
-      source: "rss_news",
-      tags: ["finance", "tech", "markets"],
-    },
-    {
-      url: "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
-      source: "rss_news",
-      tags: ["tech", "society", "policy"],
-    },
-    {
-      url: "https://hnrss.org/frontpage",
-      source: "hackernews",
-      tags: ["tech", "programming", "startups", "ai"],
-    },
-  ];
+// ─── Source Configuration ─────────────────────────────────────────────────────
+// Static fallback used when the DB is unavailable. The live list is loaded
+// from the rss_feeds table via getActiveFeeds() during each ingestion run.
+
+export const RSS_SOURCES: Array<{
+  url: string;
+  source: TrendSource;
+  tags: string[];
+}> = [
+  {
+    url: "https://techcrunch.com/feed/",
+    source: "rss_news",
+    tags: ["tech", "startups", "ai", "venture"],
+  },
+  {
+    url: "https://feeds.reuters.com/reuters/technologyNews",
+    source: "rss_news",
+    tags: ["tech", "business", "global"],
+  },
+  {
+    url: "https://feeds.arstechnica.com/arstechnica/index",
+    source: "rss_news",
+    tags: ["tech", "science", "policy"],
+  },
+  {
+    url: "https://www.wired.com/feed/rss",
+    source: "rss_news",
+    tags: ["culture", "tech", "future"],
+  },
+  {
+    url: "https://feeds.bloomberg.com/technology/news.rss",
+    source: "rss_news",
+    tags: ["finance", "tech", "markets"],
+  },
+  {
+    url: "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+    source: "rss_news",
+    tags: ["tech", "society", "policy"],
+  },
+  {
+    url: "https://hnrss.org/frontpage",
+    source: "hackernews",
+    tags: ["tech", "programming", "startups", "ai"],
+  },
+];
 
 // ─── Persona Interest Graphs ──────────────────────────────────────────────────
 // Keywords that signal high relevance for each persona.
@@ -432,8 +437,19 @@ export async function fetchLatestTrendCandidates(): Promise<RawTrendItem[]> {
   const items: RawTrendItem[] = [];
   const errors: string[] = [];
 
+  // Load active feeds from DB; fall back to static list if DB is unavailable
+  let sources: Array<{ url: string; source: TrendSource; tags: string[] }>;
+  try {
+    const dbFeeds = await getActiveFeeds();
+    sources = dbFeeds.length > 0 ? dbFeeds : RSS_SOURCES;
+    console.log(`[Ingestion] Loaded ${sources.length} active feed(s) from ${dbFeeds.length > 0 ? "database" : "static fallback"}`);
+  } catch (err) {
+    console.warn("[Ingestion] Could not load feeds from DB, using static fallback:", (err as Error).message);
+    sources = RSS_SOURCES;
+  }
+
   await Promise.allSettled(
-    RSS_SOURCES.map(async ({ url, source, tags }) => {
+    sources.map(async ({ url, source, tags }) => {
       try {
         const feed = await withTimeout(
           rssParser.parseURL(url),
@@ -721,9 +737,13 @@ export async function rankTrendCandidates(
     const memoryScore = clampScore(memoryTotal / 10);
     const maxRelevance = Math.max(...Object.values(scores));
     const urgency = calcUrgency(item);
-    const urgencyBoost = urgency === "high" ? 0.08 : urgency === "medium" ? 0.04 : 0;
+    const urgencyBoost =
+      urgency === "high" ? 0.08 : urgency === "medium" ? 0.04 : 0;
     const weightedScore = clampScore(
-      maxRelevance * 0.7 + memoryScore * 0.22 + (assigned.length >= 2 ? 0.08 : 0) + urgencyBoost,
+      maxRelevance * 0.7 +
+        memoryScore * 0.22 +
+        (assigned.length >= 2 ? 0.08 : 0) +
+        urgencyBoost,
     );
 
     scored.push({
