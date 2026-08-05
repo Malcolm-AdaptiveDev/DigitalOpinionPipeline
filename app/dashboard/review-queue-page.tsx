@@ -7,7 +7,6 @@ import {
   getMockMemoryTagSets,
   getMockReviewCounts,
   getMockReviewRows,
-  getMockTrendingCount,
   isMockMode,
 } from "@/lib/mock-data";
 import { BudgetEditor } from "./budget-editor";
@@ -34,11 +33,11 @@ const PLATFORM_ICON: Record<string, string> = {
 };
 
 const STATUS_COLOR: Record<string, string> = {
-  pending:    "#EF9F27",
-  approved:   "#1D9E75",
-  edited:     "#7F77DD",
-  rejected:   "#E24B4A",
-  outdated:   "#6b7280",
+  pending: "#EF9F27",
+  approved: "#1D9E75",
+  edited: "#7F77DD",
+  rejected: "#E24B4A",
+  outdated: "#6b7280",
   unapproved: "#9b4dca",
 };
 
@@ -96,7 +95,14 @@ async function getData(status: string, mockMode: boolean) {
     );
     const { memoryTagsByPersona, memoryTagsAny } =
       getMockMemoryTagSets(topicTags);
-    return { items, counts, byPersona, memoryTagsByPersona, memoryTagsAny, trendingCount };
+    return {
+      items,
+      counts,
+      byPersona,
+      memoryTagsByPersona,
+      memoryTagsAny,
+      trendingCount,
+    };
   }
 
   const sb = createClient(
@@ -123,9 +129,7 @@ async function getData(status: string, mockMode: boolean) {
     itemsRes.status === "fulfilled" ? (itemsRes.value.data ?? []) : [];
   const all = allRes.status === "fulfilled" ? (allRes.value.data ?? []) : [];
   const trendingCount =
-    trendCountRes.status === "fulfilled"
-      ? (trendCountRes.value.count ?? 0)
-      : 0;
+    trendCountRes.status === "fulfilled" ? (trendCountRes.value.count ?? 0) : 0;
   const topicTags = Array.from(
     new Set(
       items.flatMap((row) => topicTagsForRequest((row as ReviewRow).request)),
@@ -169,7 +173,14 @@ async function getData(status: string, mockMode: boolean) {
     if (p) byPersona[p] = (byPersona[p] ?? 0) + 1;
   }
 
-  return { items, counts, byPersona, memoryTagsByPersona, memoryTagsAny, trendingCount };
+  return {
+    items,
+    counts,
+    byPersona,
+    memoryTagsByPersona,
+    memoryTagsAny,
+    trendingCount,
+  };
 }
 
 export async function ReviewQueuePage({
@@ -190,8 +201,14 @@ export async function ReviewQueuePage({
   const mockMode = isMockMode(searchParams?.mock === "1");
   const mockParam = mockMode ? "&mock=1" : "";
   const mockQuery = mockMode ? "?mock=1" : "";
-  const { items, counts, byPersona, memoryTagsByPersona, memoryTagsAny, trendingCount } =
-    await getData(activeStatus, mockMode);
+  const {
+    items,
+    counts,
+    byPersona,
+    memoryTagsByPersona,
+    memoryTagsAny,
+    trendingCount,
+  } = await getData(activeStatus, mockMode);
 
   const filtered =
     activePersona === "all"
@@ -313,7 +330,11 @@ export async function ReviewQueuePage({
         <BudgetEditor mockMode={mockMode} />
       ) : (
         <>
-          <AdminActions pendingCount={counts.pending} trendingCount={trendingCount} mockMode={mockMode} />
+          <AdminActions
+            pendingCount={counts.pending}
+            trendingCount={trendingCount}
+            mockMode={mockMode}
+          />
 
           {counts.pending > 0 && activeStatus !== "pending" && (
             <div
@@ -355,7 +376,13 @@ export async function ReviewQueuePage({
             }}
           >
             {(
-              ["pending", "approved", "edited", "rejected", "unapproved"] as const
+              [
+                "pending",
+                "approved",
+                "edited",
+                "rejected",
+                "unapproved",
+              ] as const
             ).map((s) => (
               <Link
                 key={s}
@@ -741,4 +768,7 @@ export default async function DashboardPage({
   };
 }) {
   return <ReviewQueuePage searchParams={searchParams} />;
+}
+function getMockTrendingCount(): number {
+  return Math.floor(Math.random() * 15) + 3;
 }

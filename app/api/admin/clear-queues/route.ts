@@ -6,8 +6,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clearPendingReviews, clearTrendingQueues } from "@/lib/pipeline/db";
 import {
-  clearMockPendingReviews,
-  clearMockTrendingQueues,
+  // clearMockPendingReviews,
+  // clearMockTrendingQueues,
   isMockMode,
 } from "@/lib/mock-data";
 
@@ -41,10 +41,10 @@ export async function POST(req: NextRequest) {
       const result: Record<string, unknown> = { ok: true, mockMode: true };
 
       if (action === "pending_reviews" || action === "both") {
-        result.reviewsCleared = clearMockPendingReviews();
+        //result.reviewsCleared = clearMockPendingReviews();
       }
       if (action === "trending_queues" || action === "both") {
-        result.trendsCleared = clearMockTrendingQueues();
+        //result.trendsCleared = clearMockTrendingQueues();
       }
 
       return NextResponse.json(result);

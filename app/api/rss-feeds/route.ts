@@ -16,8 +16,8 @@ function validateFeedBody(body: Record<string, unknown>): {
   name: string;
   source: TrendSource;
   tags: string[];
-  notes?: string;
-  is_active?: boolean;
+  notes: string | null;
+  is_active: boolean;
 } {
   if (!body.url || typeof body.url !== "string") {
     throw new Error("url is required and must be a string");
@@ -46,7 +46,7 @@ function validateFeedBody(body: Record<string, unknown>): {
     name: (body.name as string).trim(),
     source: body.source as TrendSource,
     tags,
-    notes: body.notes ? String(body.notes) : undefined,
+    notes: body.notes ? String(body.notes) : null,
     is_active: body.is_active !== false,
   };
 }

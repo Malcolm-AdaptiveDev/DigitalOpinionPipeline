@@ -494,7 +494,14 @@ export function getMockReviewRows(status: string): MockReviewRow[] {
 }
 
 export function getMockReviewCounts() {
-  const counts = { pending: 0, approved: 0, edited: 0, rejected: 0 };
+  const counts = {
+    pending: 0,
+    approved: 0,
+    edited: 0,
+    rejected: 0,
+    unapproved: 0,
+    outdated: 0,
+  } as Record<ReviewStatus, number>;
   const byPersona: Record<string, number> = {};
 
   for (const item of store().reviewQueue) {
